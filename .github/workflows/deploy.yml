@@ -1,0 +1,39 @@
+#===================================
+# NOTE: this will be implemented at the next step once SSH key-validation has been established
+# ==================================
+#
+#  name: Deploy
+
+# on:
+#   release:
+#     types: [published]
+#   push:
+#     branches:
+#       - staging
+
+# jobs:
+#   deploy-prod:
+#     if: github.event_name == 'release'
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: appleboy/ssh-action@v1.0.3
+#         with:
+#           host: ${{ secrets.PI_HOST }}
+#           username: ${{ secrets.PI_USER }}
+#           key: ${{ secrets.PI_SSH_KEY }}
+#           script: |
+#             git -C ~/media-pi pull
+#             systemctl restart media-pi
+
+#   deploy-staging:
+#     if: github.event_name == 'push'
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: appleboy/ssh-action@v1.0.3
+#         with:
+#           host: ${{ secrets.PI_HOST }}
+#           username: ${{ secrets.PI_USER }}
+#           key: ${{ secrets.PI_SSH_KEY }}
+#           script: |
+#             git -C ~/media-pi-staging pull
+#             systemctl restart media-pi-staging
