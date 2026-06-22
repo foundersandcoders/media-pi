@@ -48,16 +48,20 @@ ControlsPanel {
 
 Button {
     background: #000000;
-    color: #ffffff;
-    border: none;
+    color: #888888;
+    border: round #000000;
     padding: 0 2;
+}
+
+Panel:focus-within Button {
+    color: #ffffff;
 }
 
 Button:focus {
     background: #000000;
     color: #ffffff;
-    border: none;
-    text-style: underline;
+    border: round #ffffff;
+    text-style: none;
 }
 
 Button.-inactive {
