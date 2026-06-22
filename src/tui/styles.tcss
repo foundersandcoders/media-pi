@@ -68,3 +68,19 @@ Button:disabled {
     color: #444444;
     background: #000000;
 }
+
+/* Data panels ───────────────────────────────────────────── */
+
+#data-panels {
+    layout: vertical;
+    height: 1fr;
+}
+
+#data-panels.-wide {
+    layout: horizontal;
+}
+
+#data-panels Panel {
+    height: 1fr;
+    width: 1fr;
+}
