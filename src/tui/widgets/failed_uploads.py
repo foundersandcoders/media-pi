@@ -9,6 +9,8 @@ _HEADER = f"{'cohort':<14}  {'name':<12}  {'pt':>2}  {'size':>6}  {'date':>5}  s
 
 
 class FailedUploads(Static):
+    can_focus = True
+
     def on_mount(self) -> None:
         self.update(self._build())
 

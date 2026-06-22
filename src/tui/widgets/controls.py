@@ -6,9 +6,10 @@ from textual.widget import Widget
 from textual.widgets import Button
 
 from ..paths import RECORD, UPLOAD
+from .mixins import ArrowNavigable
 
 
-class ControlsPanel(Widget):
+class ControlsPanel(ArrowNavigable, Widget):
     class ActionCompleted(Message):
         pass
 
