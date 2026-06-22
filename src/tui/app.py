@@ -2,11 +2,11 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Header
 
-from .controls import ControlsPanel
-from .failed_uploads import FailedUploads
-from .panel import Panel
-from .status import StatusPanel
-from .video_table import VideoTable
+from .widgets.controls import ControlsPanel
+from .widgets.failed_uploads import FailedUploads
+from .widgets.panel import Panel
+from .widgets.status import StatusPanel
+from .widgets.video_table import VideoTable
 
 
 class MediaPiTUI(App):

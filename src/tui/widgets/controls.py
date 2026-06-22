@@ -5,7 +5,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
 
-from .paths import RECORD, UPLOAD
+from ..paths import RECORD, UPLOAD
 
 
 class ControlsPanel(Widget):

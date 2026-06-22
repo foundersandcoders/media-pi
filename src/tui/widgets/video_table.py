@@ -2,8 +2,8 @@ from rich.table import Table
 from rich.text import Text
 from textual.widgets import Static
 
-from .formatters import format_date, format_size
-from .queries import get_all_videos
+from ..formatters import format_date, format_size
+from ..queries import get_all_videos
 
 
 class VideoTable(Static):

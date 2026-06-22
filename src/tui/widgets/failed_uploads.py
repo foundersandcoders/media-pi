@@ -2,8 +2,8 @@ from rich.console import Group
 from rich.text import Text
 from textual.widgets import Static
 
-from .formatters import format_date, format_size
-from .queries import get_failed_videos
+from ..formatters import format_date, format_size
+from ..queries import get_failed_videos
 
 _HEADER = f"{'cohort':<14}  {'name':<12}  {'pt':>2}  {'size':>6}  {'date':>5}  status"
 
