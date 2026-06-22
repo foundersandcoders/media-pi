@@ -43,6 +43,7 @@ def get_failed_videos():
                 v.video_size,
                 v.recorded_at,
                 v.status,
+                v.file_path,
                 e.message AS error_message
             FROM video v
             LEFT JOIN cohort_mapping c ON v.cohort_mapping_id = c.id
