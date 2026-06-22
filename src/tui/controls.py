@@ -12,13 +12,6 @@ class ControlsPanel(Widget):
     class ActionCompleted(Message):
         pass
 
-    DEFAULT_CSS = """
-    ControlsPanel {
-        height: auto;
-        layout: horizontal;
-    }
-    """
-
     def compose(self) -> ComposeResult:
         yield Button("Start", id="start", variant="primary", flat=True)
         yield Button("Stop", id="stop", variant="primary", flat=True)

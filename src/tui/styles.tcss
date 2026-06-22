@@ -1,0 +1,70 @@
+/* ─────────────────────────────────────────────────────────
+   Palette
+     #000000   black       background
+     #444444   dark-grey   inactive / locked
+     #888888   light-grey  not in focus
+     #ffffff   white       in focus / selectable
+   ───────────────────────────────────────────────────────── */
+
+Screen {
+    background: #000000;
+}
+
+/* Panel ─────────────────────────────────────────────────── */
+
+Panel {
+    border: solid #888888;
+    border-title-color: #888888;
+    border-title-background: #000000;
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+Panel:focus-within {
+    border: solid #ffffff;
+    border-title-color: #ffffff;
+}
+
+/* StatusPanel ───────────────────────────────────────────── */
+
+StatusPanel {
+    height: auto;
+    color: #888888;
+}
+
+Panel:focus-within StatusPanel {
+    color: #ffffff;
+}
+
+/* ControlsPanel ─────────────────────────────────────────── */
+
+ControlsPanel {
+    height: auto;
+    layout: horizontal;
+}
+
+/* Button ────────────────────────────────────────────────── */
+
+Button {
+    background: #000000;
+    color: #ffffff;
+    border: none;
+    padding: 0 2;
+}
+
+Button:focus {
+    background: #000000;
+    color: #ffffff;
+    border: none;
+    text-style: underline;
+}
+
+Button.-inactive {
+    color: #444444;
+}
+
+Button:disabled {
+    color: #444444;
+    background: #000000;
+}

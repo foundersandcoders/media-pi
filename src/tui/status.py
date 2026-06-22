@@ -8,12 +8,6 @@ from .paths import RECORD
 
 
 class StatusPanel(Widget):
-    DEFAULT_CSS = """
-    StatusPanel {
-        height: auto;
-    }
-    """
-
     def compose(self) -> ComposeResult:
         yield Static("", id="status")
 

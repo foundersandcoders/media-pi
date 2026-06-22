@@ -7,6 +7,8 @@ from .status import StatusPanel
 
 
 class MediaPiTUI(App):
+    CSS_PATH = "styles.tcss"
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Panel(StatusPanel(), title="Status")
