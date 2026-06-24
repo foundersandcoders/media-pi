@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.1.1 (2026-06-24)
+
+### Bug Fixes
+
+- Resolve REPO_ROOT two levels up in record/upload scripts; ignore runtime artifacts
+  ([`08ae1c7`](https://github.com/foundersandcoders/media-pi/commit/08ae1c79ceea4c6155f42e5b7ed06f553dd8b938))
+
+
 ## v0.1.0 (2026-06-24)
 
 ### Bug Fixes
