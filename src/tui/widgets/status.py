@@ -4,6 +4,8 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
+from daemon.process import running_pid
+
 from ..paths import RECORD
 
 
@@ -17,6 +19,7 @@ class StatusPanel(Widget):
 
     def refresh_status(self) -> None:
         result = subprocess.run([RECORD, "status"], capture_output=True, text=True)
-        self.query_one("#status", Static).update(
-            result.stdout.strip() or result.stderr.strip()
-        )
+        recorder = result.stdout.strip() or result.stderr.strip()
+        pid = running_pid()
+        daemon = f"daemon: running (pid {pid})" if pid else "daemon: stopped"
+        self.query_one("#status", Static).update(f"{recorder}\n{daemon}")

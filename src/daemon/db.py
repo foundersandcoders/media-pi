@@ -56,6 +56,38 @@ def recover_in_flight(conn: sqlite3.Connection, ids: dict[str, int]) -> int:
     return cur.rowcount
 
 
+def recover_stranded_recordings(
+    conn: sqlite3.Connection, ids: dict[str, int], active_path: str | None
+) -> list[sqlite3.Row]:
+    """Re-queue rows stuck at 'recording' whose file is finished.
+
+    If the daemon was down (or restarting) when a recording stopped, the watcher
+    never saw the finish event and the row is stranded at 'recording'. On startup
+    we reconcile: a 'recording' row whose file exists on disk and is NOT the file
+    record.sh is currently writing (`active_path`) is a finished segment — flip it
+    to 'in_queue'. Rows whose file is missing, or which are still being recorded,
+    are left untouched. Returns the rows re-queued.
+    """
+    recovered = []
+    rows = conn.execute(
+        "SELECT id, file_path FROM video WHERE status_mapping_id=?",
+        (ids["recording"],),
+    ).fetchall()
+    for row in rows:
+        real = os.path.realpath(row["file_path"])
+        if active_path is not None and real == active_path:
+            continue  # still being recorded
+        if not os.path.exists(real):
+            continue  # file gone — nothing to upload
+        conn.execute(
+            "UPDATE video SET status_mapping_id=? WHERE id=?",
+            (ids["in_queue"], row["id"]),
+        )
+        recovered.append(row)
+    conn.commit()
+    return recovered
+
+
 def pending_videos(conn: sqlite3.Connection, ids: dict[str, int]) -> list[sqlite3.Row]:
     """All rows currently 'in_queue' (id, file_path), oldest first."""
     return conn.execute(
