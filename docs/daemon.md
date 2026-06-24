@@ -35,20 +35,27 @@ flowchart TD
 
 ### Upload Pipeline
 
+The pipeline is **UPDATE-only**: a `video` row is created at RECORD time (with its
+cohort/workshop), and the daemon only transitions that row's status as the file moves
+through the upload. Statuses live in the `status_mapping` table
+(`recording → in_queue → uploading → uploaded / failed`).
+
 ```mermaid
 flowchart TD
-    A[daemon starts] --> B[startup_recovery\nreset uploading to pending\nenqueue all pending rows]
+    A[daemon starts] --> B[startup recovery\nreset uploading to in_queue\nenqueue all in_queue rows]
     B --> Q([asyncio.Queue warm])
 
-    W[inotify watches\nrecordings dir] -->|IN_CLOSE_WRITE\nnew .mp4 file| I[INSERT video row\nstatus=pending]
-    I --> P[queue.put filepath]
+    W[watchfiles awatch\nrecordings dir] -->|finished .mp4\nnot the active recording| M[find video row\nby file_path]
+    M -->|row exists and\nrecording or in_queue| U1[UPDATE status=in_queue]
+    M -->|no row / already past| X[skip]
+    U1 --> P[queue.put video_id, path]
     P --> Q
 
     Q --> G[queue.get\nawaits next item]
     G --> U[UPDATE status=uploading]
-    U --> S[upload.sh filepath]
+    U --> S[upload.sh path]
     S -->|exit 0| K[UPDATE status=uploaded]
-    S -->|exit non-zero| F[UPDATE status=failed\nstore error message]
+    S -->|exit non-zero| F[UPDATE status=failed\nset error_mapping_id]
     K --> G
     F --> G
 ```

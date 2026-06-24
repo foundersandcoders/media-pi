@@ -103,6 +103,14 @@ cmd_start() {
     exit 4
   fi
 
+  # Create the DB video row (status=recording) so the daemon can pick the file
+  # up after stop. Best-effort: a DB failure must NEVER stop a recording, so we
+  # swallow the exit code and only warn. (Python is the sole DB writer — bash
+  # never touches SQLite itself.)
+  if ! PYTHONPATH="$REPO_ROOT/src" python3 -m daemon.record_start "$filename" 2>>"$logfile"; then
+    echo "record.sh: warning — could not create DB row for $filename (recording continues)" >&2
+  fi
+
   echo "recording pid=$pid file=$filename"
 }
 

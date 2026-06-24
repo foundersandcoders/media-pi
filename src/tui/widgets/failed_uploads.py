@@ -5,6 +5,9 @@ from rich.panel import Panel as RichPanel
 from rich.text import Text
 from textual.widgets import Static
 
+from daemon.db import load_status_ids, set_status
+
+from ..db import get_connection
 from ..formatters import format_date, format_size
 from ..paths import UPLOAD
 from ..queries import get_failed_videos
@@ -79,8 +82,14 @@ class FailedUploads(ArrowNavigable, Static):
     def action_upload_selected(self) -> None:
         if not self._rows:
             return
-        file_path = self._rows[self._selected]["file_path"]
-        subprocess.run([UPLOAD, file_path])
+        row = self._rows[self._selected]
+        proc = subprocess.run([UPLOAD, row["file_path"]])
+        # Generic handling for now (matches the daemon) — uploaded on success,
+        # failed otherwise. See docs/dev/error-handling.md for the planned scheme.
+        status_name = "uploaded" if proc.returncode == 0 else "failed"
+        with get_connection() as conn:
+            ids = load_status_ids(conn)
+            set_status(conn, row["id"], ids[status_name])
         self._rows = get_failed_videos()
         self._selected = min(self._selected, max(0, len(self._rows) - 1))
         self.update(self._build())

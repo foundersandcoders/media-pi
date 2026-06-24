@@ -5,12 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "media-pi"
 version = "0.0.0"
+dependencies = [
+    "textual",
+    "watchfiles",
+]
 
 [project.scripts]
 tui = "tui.app:main"
+daemon = "daemon.__main__:main_sync"
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.black]
 line-length = 88

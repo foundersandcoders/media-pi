@@ -1,0 +1,27 @@
+# Media-Pi daemon — upload pipeline (scheduler + MQTT to follow).
+# Install on the Pi:
+#   sudo cp deploy/media-pi-daemon.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now media-pi-daemon
+# Logs: journalctl -u media-pi-daemon -f
+
+[Unit]
+Description=Media-Pi upload pipeline daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/media-pi
+EnvironmentFile=/home/pi/media-pi/.env
+ExecStart=/usr/bin/python3 -m daemon
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
