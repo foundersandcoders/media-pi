@@ -12,6 +12,15 @@ Polling for all three of these would introduce latency between trigger and effec
 
 All three of them with run as `asyncio` coroutines inside a single event loop. This structure enables us to add more triggers without spawning addoitional processes.
 
+## Lifecycle
+
+`systemd` owns the daemon (`deploy/media-pi-daemon.service`): it starts on boot,
+restarts on failure, and runs independently of any login session. The TUI's Daemon
+Start/Stop buttons are a convenience layer over `systemctl start|stop media-pi-daemon`
+— they do **not** launch the Python process directly, so systemd's guarantees still
+hold. This needs a passwordless `sudo` rule for the TUI user; see
+[`pi-setup.md`](pi-setup.md) §4.
+
 ## Architecture
 
 ### Scheduler

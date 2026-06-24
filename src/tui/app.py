@@ -36,7 +36,12 @@ class MediaPiTUI(App):
         self.query_one("#data-panels").set_class(event.size.width >= 120, "-wide")
 
     def on_controls_panel_action_completed(self) -> None:
-        self.query_one(StatusPanel).refresh_status()
+        # systemctl returns before the daemon writes its PID file, so refresh now
+        # and again shortly after to catch the daemon coming up/down. set_timer is
+        # non-blocking; the 5s StatusPanel poll is the final backstop.
+        status = self.query_one(StatusPanel)
+        status.refresh_status()
+        self.set_timer(1.5, status.refresh_status)
 
 
 def main() -> None:

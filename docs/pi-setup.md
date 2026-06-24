@@ -29,3 +29,26 @@ bash scripts/install-dev-deps.sh
 ```
 
 This installs `pre-commit` for your OS and registers the hooks in the repo.
+
+## 4. Let the TUI control the daemon
+
+The TUI's Daemon Start/Stop buttons run `sudo -n systemctl start|stop media-pi-daemon`.
+Grant the **login user that runs the TUI** (check with `whoami`) passwordless `sudo` for
+exactly those two commands. First confirm the `systemctl` path:
+
+```bash
+command -v systemctl   # usually /usr/bin/systemctl — update the rule below if it differs
+```
+
+Then create a narrow drop-in (replace `admin` with your TUI user):
+
+```bash
+sudo visudo -f /etc/sudoers.d/media-pi-daemon
+```
+```
+admin ALL=(root) NOPASSWD: /usr/bin/systemctl start media-pi-daemon, /usr/bin/systemctl stop media-pi-daemon
+```
+
+Without this rule the buttons fail fast (no hang) and the TUI shows an error toast —
+`sudo -n` never prompts for a password. The rule is intentionally limited to the two
+exact commands.

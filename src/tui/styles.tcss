@@ -44,6 +44,15 @@ ControlsPanel {
     layout: horizontal;
 }
 
+/* the two inner panels (Recording, Daemon): hug their buttons, sit side by side */
+ControlsPanel > Panel {
+    width: auto;
+    height: auto;
+    layout: horizontal;
+    margin-bottom: 0;
+    margin-right: 1;
+}
+
 /* Button ────────────────────────────────────────────────── */
 
 Button {
