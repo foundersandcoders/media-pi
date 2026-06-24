@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Seeds required constant data. Safe to run on any DB, including live."""
+
 import sys
 from pathlib import Path
 
@@ -24,12 +25,21 @@ ERROR_MAPPING = [
     },
 ]
 
+# Upload/recording lifecycle states. Order is the natural progression; ids are
+# assigned by insertion order but always looked up by name, never hardcoded.
+STATUS_MAPPING = ["recording", "in_queue", "uploading", "uploaded", "failed"]
+
 
 if __name__ == "__main__":
     db_path = get_db_path()
     print(f"Seeding constants → {db_path}")
     with get_connection() as conn:
         init_schema(conn)
+        for name in STATUS_MAPPING:
+            conn.execute(
+                "INSERT OR IGNORE INTO status_mapping (name) VALUES (?)",
+                (name,),
+            )
         for e in ERROR_MAPPING:
             conn.execute(
                 "INSERT OR IGNORE INTO error_mapping (exit_code, error_id, message)"

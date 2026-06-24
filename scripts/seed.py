@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Populates the test database with representative seed data. Test DB only."""
+
 import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -50,6 +51,14 @@ def _error_id(conn, exit_code, error_id):
     row = conn.execute(
         "SELECT id FROM error_mapping WHERE exit_code=? AND error_id=?",
         (exit_code, error_id),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def _status_id(conn, name):
+    row = conn.execute(
+        "SELECT id FROM status_mapping WHERE name=?",
+        (name,),
     ).fetchone()
     return row["id"] if row else None
 
@@ -167,7 +176,7 @@ def seed(conn):
             "recorded_at": _dt(date.today() - timedelta(weeks=1), time(10, 0)),
             "video_size": None,
             "video_length": None,
-            "status": "pending",
+            "status": "in_queue",
             "part": 1,
             "error_mapping_id": None,
         },
@@ -182,14 +191,26 @@ def seed(conn):
             "part": 1,
             "error_mapping_id": None,
         },
+        {
+            "file_path": "/tmp/media-pi-recordings/session_inqueue_part000.mp4",
+            "cohort_mapping_id": active_cohort_id,
+            "workshop_mapping_id": None,
+            "recorded_at": _dt(date.today(), time(10, 0)),
+            "video_size": None,
+            "video_length": None,
+            "status": "in_queue",
+            "part": 1,
+            "error_mapping_id": None,
+        },
     ]
     for v in videos:
+        v = {**v, "status_mapping_id": _status_id(conn, v.pop("status"))}
         conn.execute(
             "INSERT INTO video"
             " (file_path, cohort_mapping_id, workshop_mapping_id, recorded_at,"
-            "  video_size, video_length, status, part, error_mapping_id)"
+            "  video_size, video_length, status_mapping_id, part, error_mapping_id)"
             " VALUES (:file_path, :cohort_mapping_id, :workshop_mapping_id, :recorded_at,"
-            "  :video_size, :video_length, :status, :part, :error_mapping_id)",
+            "  :video_size, :video_length, :status_mapping_id, :part, :error_mapping_id)",
             v,
         )
 
