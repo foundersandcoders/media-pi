@@ -1,1 +1,9 @@
+#dev
 /docs/dev/
+
+#python build
+media_pi.egg-info/
+**/__pycache__/
+
+#database
+data/
