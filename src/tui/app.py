@@ -1,6 +1,5 @@
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Header
 
 from .widgets.controls import ControlsPanel
 from .widgets.failed_uploads import FailedUploads
@@ -19,7 +18,6 @@ class MediaPiTUI(App):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header()
         yield Panel(StatusPanel(), title="Status")
         yield Panel(ControlsPanel(), title="[1] Controls")
         yield Vertical(
