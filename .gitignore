@@ -1,5 +1,6 @@
 #dev
 /docs/dev/
+**/logs/
 
 #python build
 media_pi.egg-info/
@@ -7,3 +8,9 @@ media_pi.egg-info/
 
 #database
 data/
+
+# recordings
+recordings/
+
+# env
+.env
