@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-06-24)
+
+### Features
+
+- Upload via presigned PUT (direct-to-CDN), drop MinIO/rclone
+  ([`eb804c1`](https://github.com/foundersandcoders/media-pi/commit/eb804c1128a338280f7b22ebaa8a0940dbadd0f9))
+
+
 ## v0.2.0 (2026-06-24)
 
 ### Chores
