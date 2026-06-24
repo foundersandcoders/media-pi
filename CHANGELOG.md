@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v0.2.0 (2026-06-24)
+
+### Chores
+
+- Removes textual header
+  ([`31b004a`](https://github.com/foundersandcoders/media-pi/commit/31b004a7d6cc09866cf2417edf7f66c65b4f3f1f))
+
+### Documentation
+
+- Docs for the daemon
+  ([`ebfe07f`](https://github.com/foundersandcoders/media-pi/commit/ebfe07f2292557e4515781a87106f39770eeff7a))
+
+### Features
+
+- Adds controls to control the daemon from the control panel
+  ([`ed03e00`](https://github.com/foundersandcoders/media-pi/commit/ed03e00d4930973434e31332b5d9f58e1471ec07))
+
+
 ## v0.1.1 (2026-06-24)
 
 ### Bug Fixes
