@@ -17,15 +17,11 @@ set +a
 
 : "${FAC_API_URL:?FAC_API_URL not set in .env}"
 : "${FAC_API_KEY:?FAC_API_KEY not set in .env}"
-: "${MINIO_ENDPOINT:?MINIO_ENDPOINT not set in .env}"
-: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY not set in .env}"
-: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY not set in .env}"
-: "${MINIO_BUCKET:?MINIO_BUCKET not set in .env}"
 LOG_DIR="${LOG_DIR:-./logs}"
 PID_FILE="${PID_FILE:-/tmp/fac-recorder.pid}"
 
-if ! command -v rclone >/dev/null 2>&1; then
-  echo "upload-cdn.sh: rclone not found — install it (brew install rclone / apt install rclone)" >&2
+if ! command -v jq >/dev/null 2>&1; then
+  echo "upload.sh: jq not found — install it (apt install jq)" >&2
   exit 1
 fi
 
@@ -83,31 +79,31 @@ REG=$(curl -fsS -X POST "$FAC_API_URL" \
 # resolver's { video_id, object_key } arrives at the top level.
 VIDEO_ID=$(echo "$REG" | jq -r '.video_id // empty')
 OBJECT_KEY=$(echo "$REG" | jq -r '.object_key // empty')
+UPLOAD_URL=$(echo "$REG" | jq -r '.upload_url // empty')
 
-if [[ -z "$VIDEO_ID" || -z "$OBJECT_KEY" ]]; then
+if [[ -z "$VIDEO_ID" || -z "$OBJECT_KEY" || -z "$UPLOAD_URL" ]]; then
   log "register: bad response — $REG"
   exit 4
 fi
 log "register: video_id=$VIDEO_ID object_key=$OBJECT_KEY"
 
-# --- 2. upload via rclone (chunked multipart, built-in retry) ---------------
-# :s3: syntax targets the s3 backend directly — no rclone config file needed.
-# rclone switches to multipart automatically for files over 200MB.
-log "upload: rclone copyto → $MINIO_BUCKET/$OBJECT_KEY"
+# --- 2. upload via presigned PUT (direct to CDN) ----------------------------
+# register returns a presigned S3 URL (SignedHeaders=host), so the Pi needs no
+# storage credentials. curl streams the file from disk and retries the whole PUT
+# on transient errors. A presigned PUT is single-shot — no resume — so a hard
+# failure re-uploads from scratch; the daemon/TUI retry is the outer safety net.
+# `?` is stripped from the logged URL to keep the signature out of the logs.
+log "upload: PUT → ${UPLOAD_URL%%\?*}"
 rc=0
-rclone copyto "$FILE" ":s3:${MINIO_BUCKET}/${OBJECT_KEY}" \
-  --s3-provider Minio \
-  --s3-endpoint "$MINIO_ENDPOINT" \
-  --s3-access-key-id "$MINIO_ACCESS_KEY" \
-  --s3-secret-access-key "$MINIO_SECRET_KEY" \
-  --s3-chunk-size 32M \
-  --retries 5 \
-  --retries-sleep 10s \
-  --log-level INFO \
+curl -fsS --upload-file "$FILE" "$UPLOAD_URL" \
+  -H "Content-Type: video/mp4" \
+  --retry 5 \
+  --retry-delay 10 \
+  --retry-all-errors \
   >>"$LOGFILE" 2>&1 || rc=$?
 if ((rc != 0)); then
-  log "upload: rclone failed (rc=$rc) — see $LOGFILE"
-  echo "${FILE}.failed: rclone failed rc=$rc at $(date -u +%Y-%m-%dT%H:%M:%SZ) video_id=$VIDEO_ID object_key=$OBJECT_KEY" >"${FILE}.failed"
+  log "upload: PUT failed (rc=$rc) — see $LOGFILE"
+  echo "${FILE}.failed: upload failed rc=$rc at $(date -u +%Y-%m-%dT%H:%M:%SZ) video_id=$VIDEO_ID object_key=$OBJECT_KEY" >"${FILE}.failed"
   exit 3
 fi
 log "upload: ok"
