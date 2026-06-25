@@ -17,7 +17,13 @@ from .db import (
     recover_in_flight,
     recover_stranded_recordings,
 )
-from .pipeline import STOP, active_recording_file, upload_worker, watch_recordings
+from .pipeline import (
+    STOP,
+    active_recording_file,
+    reconcile_stranded,
+    upload_worker,
+    watch_recordings,
+)
 from .process import clear_pid, write_pid
 
 log = logging.getLogger("daemon")
@@ -30,6 +36,8 @@ async def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # watchfiles logs an INFO line per change batch — far too chatty for the journal.
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
     write_pid()
     conn = get_connection()
     try:
@@ -64,10 +72,14 @@ async def main() -> None:
             watch_recordings(conn, status_ids, queue, stop)
         )
         worker_task = asyncio.create_task(upload_worker(conn, status_ids, queue))
+        reconcile_task = asyncio.create_task(
+            reconcile_stranded(conn, status_ids, queue, stop)
+        )
 
         await stop.wait()
         log.info("shutdown signal received — draining")
         await watch_task  # awatch exits on the stop event
+        await reconcile_task  # exits on the stop event
         await queue.put(STOP)  # wake the worker once the in-flight upload finishes
         await worker_task
         log.info("daemon stopped cleanly")
