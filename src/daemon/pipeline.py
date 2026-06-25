@@ -15,7 +15,7 @@ import os
 
 from tui.paths import UPLOAD
 
-from .db import find_video_by_path, set_status
+from .db import find_video_by_path, recover_stranded_recordings, set_status
 
 log = logging.getLogger("daemon.pipeline")
 
@@ -25,6 +25,9 @@ _FILE_STATE = f"{_PID_FILE}.file"
 
 # Sentinel pushed onto the queue to stop the worker after the current upload.
 STOP = None
+
+# How often the reconcile loop sweeps for stranded recordings.
+RECONCILE_INTERVAL = 5  # seconds
 
 
 def active_recording_file() -> str | None:
@@ -62,6 +65,30 @@ async def watch_recordings(conn, ids, queue: asyncio.Queue, stop: asyncio.Event)
             log.info("queued video id=%s %s", row["id"], path)
 
     log.info("watch_recordings stopped")
+
+
+async def reconcile_stranded(conn, ids, queue: asyncio.Queue, stop: asyncio.Event):
+    """Safety net for watch_recordings: re-queue finished recordings it missed.
+
+    The watcher skips a file while record.sh still flags it active, and a recording's
+    final write usually lands inside that window — so on stop the row can sit at
+    'recording' with no further filesystem event to wake the watcher. This runs the
+    same reconciliation as startup, on an interval, so any stranded recording is
+    picked up within RECONCILE_INTERVAL seconds. recover_stranded_recordings skips
+    the file that is currently being written, so an in-progress recording is safe.
+    """
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=RECONCILE_INTERVAL)
+        except asyncio.TimeoutError:
+            pass  # interval elapsed — time to sweep
+        if stop.is_set():
+            break
+        for row in recover_stranded_recordings(conn, ids, active_recording_file()):
+            queue.put_nowait((row["id"], row["file_path"]))
+            log.info("reconciled stranded recording id=%s -> in_queue", row["id"])
+
+    log.info("reconcile loop stopped")
 
 
 async def upload_worker(conn, ids, queue: asyncio.Queue):
