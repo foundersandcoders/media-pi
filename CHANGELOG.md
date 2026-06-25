@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-06-25)
+
+### Features
+
+- Notification based tui updates
+  ([`abbe716`](https://github.com/foundersandcoders/media-pi/commit/abbe71602a10741286b5d310c1c8a4293d68c685))
+
+
 ## v0.3.0 (2026-06-24)
 
 ### Features
