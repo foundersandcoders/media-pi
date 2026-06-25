@@ -40,6 +40,14 @@ class FailedUploads(ArrowNavigable, Static):
         self._focused = False
         self.update(self._build())
 
+    # Not named refresh(): Textual's Widget.refresh() already exists.
+    def reload(self) -> None:
+        """Re-query, keeping the selected row in range."""
+        old = self._selected
+        self._rows = get_failed_videos()
+        self._selected = min(old, max(0, len(self._rows) - 1))
+        self.update(self._build())
+
     def _build(self):
         color = "#ffffff" if self._focused else "#888888"
 

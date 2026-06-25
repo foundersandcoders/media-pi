@@ -9,7 +9,10 @@ queries are local and fast enough to run inline on the event loop.
 import os
 import sqlite3
 
-from tui.db import get_connection  # noqa: F401 — re-exported for the daemon
+from tui.db import (  # noqa: F401 — re-exported for the daemon
+    get_connection,
+    notify_change,
+)
 
 
 def load_status_ids(conn: sqlite3.Connection) -> dict[str, int]:
@@ -40,6 +43,7 @@ def set_status(conn: sqlite3.Connection, video_id: int, status_id: int) -> None:
         (status_id, video_id),
     )
     conn.commit()
+    notify_change()
 
 
 def recover_in_flight(conn: sqlite3.Connection, ids: dict[str, int]) -> int:
@@ -53,6 +57,8 @@ def recover_in_flight(conn: sqlite3.Connection, ids: dict[str, int]) -> int:
         (ids["in_queue"], ids["uploading"]),
     )
     conn.commit()
+    if cur.rowcount:
+        notify_change()
     return cur.rowcount
 
 
@@ -85,6 +91,8 @@ def recover_stranded_recordings(
         )
         recovered.append(row)
     conn.commit()
+    if recovered:
+        notify_change()
     return recovered
 
 

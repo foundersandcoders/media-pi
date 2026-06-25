@@ -6,6 +6,22 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _SCHEMA = Path(__file__).parent.parent / "core" / "schema.sql"
 _DATA_DIR = _REPO_ROOT / "data"
 
+# Sentinel the writers (daemon, record_start, TUI retry) touch on every DB commit;
+# the TUI watches it with watchfiles and reloads its data widgets. This is how a
+# separate writer process nudges the reader — SQLite has no cross-process change
+# notification.
+SENTINEL_FILE = _DATA_DIR / ".ui-dirty"
+
+
+def notify_change() -> None:
+    """Touch the UI sentinel so the TUI's watcher refreshes. Best-effort — a
+    sentinel failure must never break a DB write."""
+    try:
+        _DATA_DIR.mkdir(exist_ok=True)
+        SENTINEL_FILE.touch()
+    except OSError:
+        pass
+
 
 def _current_branch() -> str:
     try:

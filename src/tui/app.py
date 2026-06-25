@@ -1,6 +1,8 @@
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 
+from .db import SENTINEL_FILE, notify_change
 from .widgets.controls import ControlsPanel
 from .widgets.failed_uploads import FailedUploads
 from .widgets.panel import Panel
@@ -25,6 +27,24 @@ class MediaPiTUI(App):
             Panel(FailedUploads(), title="[2] Failed Uploads"),
             id="data-panels",
         )
+
+    def on_mount(self) -> None:
+        # Create the sentinel up front so awatch has an existing path to watch
+        # (and a stable inode — we only ever touch it, never delete it).
+        notify_change()
+        self._watch_db_changes()
+
+    @work(exclusive=True)
+    async def _watch_db_changes(self) -> None:
+        """Reload the data widgets whenever a writer touches the sentinel."""
+        from watchfiles import awatch
+
+        async for _ in awatch(str(SENTINEL_FILE)):
+            self.reload_data()
+
+    def reload_data(self) -> None:
+        self.query_one(VideoTable).reload()
+        self.query_one(FailedUploads).reload()
 
     def action_focus_controls(self) -> None:
         self.query_one("#start").focus()
