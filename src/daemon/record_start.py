@@ -16,7 +16,7 @@ never touches SQLite itself.
 import sys
 from datetime import datetime
 
-from .db import find_video_by_path, get_connection, load_status_ids
+from .db import find_video_by_path, get_connection, load_status_ids, notify_change
 
 # All recordings are attributed to this single cohort until event/schedule
 # resolution lands. To replace the hack, swap this constant for real resolution
@@ -62,6 +62,7 @@ def record_start(path: str) -> None:
             (path, cohort_id, datetime.now().isoformat(timespec="seconds"), status_id),
         )
         conn.commit()
+        notify_change()
     finally:
         conn.close()
 

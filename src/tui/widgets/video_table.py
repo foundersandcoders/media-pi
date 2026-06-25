@@ -10,6 +10,10 @@ class VideoTable(Static):
     def on_mount(self) -> None:
         self.update(self._build())
 
+    # Not named refresh(): Textual's Widget.refresh() already exists.
+    def reload(self) -> None:
+        self.update(self._build())
+
     def _build(self):
         rows = get_all_videos()
         table = Table(
