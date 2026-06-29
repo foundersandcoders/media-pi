@@ -56,7 +56,7 @@ async def main() -> None:
             conn, status_ids, active_recording_file()
         )
         if stranded:
-            log.info("recovered %d stranded recording(s) -> in_queue", len(stranded))
+            log.info("recovered %d stranded segment(s) -> in_queue", len(stranded))
 
         queue: asyncio.Queue = asyncio.Queue()
         for row in pending_videos(conn, status_ids):

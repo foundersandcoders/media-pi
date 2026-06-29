@@ -7,18 +7,100 @@ queries are local and fast enough to run inline on the event loop.
 """
 
 import os
+import re
 import sqlite3
+from datetime import datetime
 
 from tui.db import (  # noqa: F401 — re-exported for the daemon
     get_connection,
     notify_change,
 )
 
+# Where record.sh writes segments; the watcher and helpers resolve paths against
+# this. Single definition — pipeline.py imports it from here.
+RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "./recordings")
+
+# All recordings are attributed to this single cohort until event/schedule
+# resolution lands. Replace the constant (and the SELECT-then-INSERT below) with
+# real resolution when it arrives.
+TEMP_COHORT_NAME = "FACM9"  # temp hardcoded value
+
+# Segment files are named session_<ts>_NNN.mp4 by ffmpeg's segment muxer.
+_SEGMENT_RE = re.compile(r"_(\d+)\.mp4$")
+
+
+def segment_part(path: str) -> int | None:
+    """Part number for a segment file, or None if `path` is not a segment.
+
+    ffmpeg's %03d index is 0-based; video.part is 1-based (schema DEFAULT 1), so
+    session_..._000.mp4 -> part 1, _001 -> 2. Single source of truth for the
+    mapping, shared by the watcher, active-segment detection, and tests.
+    """
+    match = _SEGMENT_RE.search(os.path.basename(path))
+    return int(match.group(1)) + 1 if match else None
+
 
 def load_status_ids(conn: sqlite3.Connection) -> dict[str, int]:
     """Load the whole status_mapping into {name: id} once at startup."""
     rows = conn.execute("SELECT id, name FROM status_mapping").fetchall()
     return {row["name"]: row["id"] for row in rows}
+
+
+def get_or_create_cohort(conn: sqlite3.Connection, name: str = TEMP_COHORT_NAME) -> int:
+    """Return the id of the cohort named `name`, creating it if absent.
+
+    cohort_mapping.name has no UNIQUE constraint, so we SELECT-then-INSERT rather
+    than INSERT OR IGNORE. The date/time fields are NOT NULL; this placeholder
+    cohort fills them with obvious sentinels so it reads as a stand-in at a glance.
+    """
+    row = conn.execute(
+        "SELECT id FROM cohort_mapping WHERE name=?",
+        (name,),
+    ).fetchone()
+    if row:
+        return row["id"]
+    cur = conn.execute(
+        "INSERT INTO cohort_mapping"
+        " (name, start_date, end_date, session_start_time, session_end_time)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (name, "1970-01-01", "1970-01-01", "00:00", "00:00"),  # temp placeholder
+    )
+    return cur.lastrowid
+
+
+def create_video_row(
+    conn: sqlite3.Connection,
+    ids: dict[str, int],
+    path: str,
+    part: int,
+    status: str = "recording",
+) -> int:
+    """INSERT a video row for `path` if absent; return its id (existing or new).
+
+    Idempotent via find_video_by_path, so the watcher can call it on every change
+    event for the active segment without duplicating rows. The cohort is the temp
+    placeholder; workshop is NULL, satisfying the schema's exactly-one CHECK.
+    """
+    existing = find_video_by_path(conn, path)
+    if existing is not None:
+        return existing["id"]
+    cohort_id = get_or_create_cohort(conn)
+    cur = conn.execute(
+        "INSERT INTO video"
+        " (file_path, cohort_mapping_id, workshop_mapping_id, recorded_at,"
+        "  status_mapping_id, part)"
+        " VALUES (?, ?, NULL, ?, ?, ?)",
+        (
+            path,
+            cohort_id,
+            datetime.now().isoformat(timespec="seconds"),
+            ids[status],
+            part,
+        ),
+    )
+    conn.commit()
+    notify_change()
+    return cur.lastrowid
 
 
 def find_video_by_path(conn: sqlite3.Connection, path: str) -> sqlite3.Row | None:

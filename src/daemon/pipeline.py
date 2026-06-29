@@ -1,8 +1,11 @@
 """The upload pipeline coroutines.
 
-watch_recordings(): inotify/FSEvents watch over the recordings dir. When a
-finished .mp4 appears that maps to an existing video row, flip it to 'in_queue'
-and hand it to the worker. UPDATE-only — rows are created at RECORD time.
+watch_recordings(): inotify/FSEvents watch over the recordings dir. ffmpeg's
+segment muxer rotates to a new session_<ts>_NNN.mp4 every SEGMENT_DURATION
+seconds; the newest segment is the one still being written, everything below it
+is finished. The watcher owns the per-segment row lifecycle: it creates a
+'recording' row for the active segment and flips finished segments to 'in_queue'
+before handing them to the worker.
 
 upload_worker(): single sequential consumer. Runs upload.sh per file and writes
 the outcome back to the DB. A `None` sentinel on the queue stops it cleanly
@@ -10,16 +13,23 @@ the outcome back to the DB. A `None` sentinel on the queue stops it cleanly
 """
 
 import asyncio
+import glob
 import logging
 import os
 
 from tui.paths import UPLOAD
 
-from .db import find_video_by_path, recover_stranded_recordings, set_status
+from .db import (
+    RECORDINGS_DIR,
+    create_video_row,
+    find_video_by_path,
+    recover_stranded_recordings,
+    segment_part,
+    set_status,
+)
 
 log = logging.getLogger("daemon.pipeline")
 
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "./recordings")
 _PID_FILE = os.environ.get("PID_FILE", "/tmp/fac-recorder.pid")
 _FILE_STATE = f"{_PID_FILE}.file"
 
@@ -31,38 +41,69 @@ RECONCILE_INTERVAL = 5  # seconds
 
 
 def active_recording_file() -> str | None:
-    """Absolute path of the file record.sh is currently writing, if any."""
+    """Realpath of the newest segment record.sh is currently writing, if any.
+
+    FILE_STATE holds the session prefix (recordings/session_<ts>_); ffmpeg writes
+    segments sequentially, so the highest-numbered one is the active file and
+    everything below it is finished. Returns None when nothing is recording.
+    """
     try:
         with open(_FILE_STATE) as fh:
-            path = fh.read().strip()
-        return os.path.realpath(path) if path else None
+            prefix = fh.read().strip()
     except FileNotFoundError:
         return None
+    if not prefix:
+        return None
+    segments = glob.glob(f"{prefix}*.mp4")
+    if not segments:
+        return None
+    newest = max(segments, key=lambda p: segment_part(p) or -1)
+    return os.path.realpath(newest)
+
+
+def process_segment(conn, ids, path: str, active: str | None, queue: asyncio.Queue):
+    """Reconcile one changed file against the DB; enqueue it if finished.
+
+    The active (newest) segment gets a 'recording' row created if missing but is
+    never enqueued — it's still being written. Any other segment is finished:
+    ensure a row exists, and if it hasn't already moved past 'in_queue', flip it
+    and hand it to the worker. Sync and side-effect-contained so tests can drive
+    it directly.
+    """
+    if not path.endswith(".mp4"):
+        return
+    part = segment_part(path)
+    if part is None:
+        return  # not a segment we manage (stray file)
+
+    if active is not None and os.path.realpath(path) == active:
+        create_video_row(conn, ids, path, part)  # idempotent
+        return
+
+    row = find_video_by_path(conn, path)
+    if row is None:
+        video_id = create_video_row(conn, ids, path, part)
+        status_id = ids["recording"]
+    else:
+        video_id, status_id = row["id"], row["status_mapping_id"]
+    if status_id not in (ids["recording"], ids["in_queue"]):
+        return  # already uploading / uploaded / failed
+    set_status(conn, video_id, ids["in_queue"])
+    queue.put_nowait((video_id, path))
+    log.info("queued video id=%s part=%s %s", video_id, part, path)
 
 
 async def watch_recordings(conn, ids, queue: asyncio.Queue, stop: asyncio.Event):
-    """Watch the recordings dir; enqueue finished segments that have a row."""
+    """Watch the recordings dir; enqueue finished segments."""
     from watchfiles import awatch
 
     os.makedirs(RECORDINGS_DIR, exist_ok=True)
-    log.info("watching %s for finished recordings", RECORDINGS_DIR)
+    log.info("watching %s for finished segments", RECORDINGS_DIR)
 
     async for changes in awatch(RECORDINGS_DIR, stop_event=stop):
         active = active_recording_file()
         for _change, path in changes:
-            if not path.endswith(".mp4"):
-                continue
-            if active is not None and os.path.realpath(path) == active:
-                continue  # still being written by the recorder
-            row = find_video_by_path(conn, path)
-            if row is None:
-                log.info("no video row for %s — skipping", path)
-                continue
-            if row["status_mapping_id"] not in (ids["recording"], ids["in_queue"]):
-                continue  # already uploading / uploaded / failed
-            set_status(conn, row["id"], ids["in_queue"])
-            queue.put_nowait((row["id"], path))
-            log.info("queued video id=%s %s", row["id"], path)
+            process_segment(conn, ids, path, active, queue)
 
     log.info("watch_recordings stopped")
 
