@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-06-29)
+
+### Features
+
+- Implements ffmpegs segment muxer for multi-video filming
+  ([`3427994`](https://github.com/foundersandcoders/media-pi/commit/34279943c4539cf697855f5eea6e53a710a16ceb))
+
+
 ## v0.4.0 (2026-06-25)
 
 ### Features
