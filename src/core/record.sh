@@ -24,6 +24,10 @@ START_STATE="${PID_FILE}.started_at"
 RECORDINGS_DIR="${RECORDINGS_DIR:-./recordings}"
 LOG_DIR="${LOG_DIR:-./logs}"
 DISK_SPACE_MIN_MB="${DISK_SPACE_MIN_MB:-500}"
+# Seconds per segment before ffmpeg rotates to the next file. The daemon uploads
+# each finished segment while the next records. On the Pi (VIDEO_CODEC=copy) the
+# real length rounds up to the camera's next keyframe — see docs/dev/PLAN-1.md.
+SEGMENT_DURATION="${SEGMENT_DURATION:-600}"
 
 is_running() {
   [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
@@ -57,9 +61,13 @@ cmd_start() {
     exit 3
   fi
 
-  local ts filename logfile
+  local ts prefix pattern logfile
   ts=$(date +%Y%m%d_%H%M%S)
-  filename="${RECORDINGS_DIR%/}/session_${ts}.mp4"
+  # ffmpeg's segment muxer fills %03d with a 0-based index: session_<ts>_000.mp4,
+  # _001.mp4, … The daemon globs `prefix*` to find segments and picks the part
+  # number off the suffix; the highest index is the one still being written.
+  prefix="${RECORDINGS_DIR%/}/session_${ts}_"
+  pattern="${prefix}%03d.mp4"
   logfile="${LOG_DIR%/}/session_${ts}.log"
 
   # Video codec is platform config (.env), same pattern as FFMPEG_INPUT_ARGS:
@@ -68,11 +76,16 @@ cmd_start() {
   #     (speed ~0.93x), and a live source that falls behind starves the audio
   #     input — heard as laggy, in-and-out sound.
   #   VIDEO_CODEC unset (Mac dev) — libx264-encode the raw avfoundation frames.
+  # With -c:v copy ffmpeg can't insert keyframes, so the segment muxer cuts at the
+  # camera's next existing keyframe at/after segment_time. On the libx264 dev path
+  # we force a keyframe every segment so cuts land on time and each segment opens
+  # on an I-frame (independently playable).
   local video_args
   if [[ "${VIDEO_CODEC:-libx264}" == "copy" ]]; then
     video_args=(-c:v copy)
   else
-    video_args=(-c:v libx264 -preset veryfast -crf 23)
+    video_args=(-c:v libx264 -preset veryfast -crf 23
+      -force_key_frames "expr:gte(t,n_forced*${SEGMENT_DURATION})")
   fi
 
   # ffmpeg: input flags come from .env, audio is fixed (AAC).
@@ -80,17 +93,32 @@ cmd_start() {
   # be split into separate argv entries.
   # nohup + background + PID capture is the idiomatic way to own a long-running
   # subprocess from a short-lived script.
+  # The segment muxer rotates output every SEGMENT_DURATION seconds. Audio (AAC)
+  # is re-encoded so it cuts cleanly anywhere; only the copied/encoded video gates
+  # the boundary. movflags is carried *per segment* via segment_format_options so
+  # the in-progress last segment is playable without a moov atom — a crash mid-
+  # segment still leaves a usable file. -reset_timestamps makes each segment start
+  # at PTS 0 so it plays standalone.
+  # Known ffmpeg quirk: the FIRST segment is ~2x SEGMENT_DURATION (the muxer skips
+  # the first boundary); every segment after it is exact. Harmless — all segments
+  # are valid and upload independently.
   # shellcheck disable=SC2086
   nohup ffmpeg -hide_banner -nostdin -y \
     $FFMPEG_INPUT_ARGS \
     "${video_args[@]}" \
     -c:a aac \
-    -movflags frag_keyframe+empty_moov \
-    "$filename" >/dev/null 2>"$logfile" &
+    -f segment \
+    -segment_time "$SEGMENT_DURATION" \
+    -segment_format mp4 \
+    -segment_format_options movflags=+frag_keyframe+empty_moov \
+    -reset_timestamps 1 \
+    "$pattern" >/dev/null 2>"$logfile" &
 
   local pid=$!
   echo "$pid" >"$PID_FILE"
-  echo "$filename" >"$FILE_STATE"
+  # FILE_STATE holds the session *prefix*, not a single filename — ffmpeg owns the
+  # per-segment names. The daemon globs it to find the active (newest) segment.
+  echo "$prefix" >"$FILE_STATE"
   date -u +%s >"$START_STATE"
 
   # Give ffmpeg a moment to fail fast (bad device, perms, etc) so we surface
@@ -103,15 +131,13 @@ cmd_start() {
     exit 4
   fi
 
-  # Create the DB video row (status=recording) so the daemon can pick the file
-  # up after stop. Best-effort: a DB failure must NEVER stop a recording, so we
-  # swallow the exit code and only warn. (Python is the sole DB writer — bash
-  # never touches SQLite itself.)
-  if ! PYTHONPATH="$REPO_ROOT/src" python3 -m daemon.record_start "$filename" 2>>"$logfile"; then
-    echo "record.sh: warning — could not create DB row for $filename (recording continues)" >&2
-  fi
+  # No DB row is created here. record.sh only knows the %03d pattern, not the
+  # individual segment names ffmpeg picks — so the daemon's watcher owns row
+  # creation, INSERTing one row per segment as each file appears (it sees the
+  # active segment and creates a 'recording' row; finished segments flip to
+  # in_queue). Python remains the sole DB writer; bash never touches SQLite.
 
-  echo "recording pid=$pid file=$filename"
+  echo "recording pid=$pid session=$prefix"
 }
 
 cmd_stop() {
@@ -151,12 +177,12 @@ cmd_stop() {
 
 cmd_status() {
   if is_running; then
-    local pid file started_at
+    local pid session started_at
     pid=$(cat "$PID_FILE")
-    file=$(cat "$FILE_STATE" 2>/dev/null || echo "<unknown>")
+    session=$(cat "$FILE_STATE" 2>/dev/null || echo "<unknown>")
     started_at=$(cat "$START_STATE" 2>/dev/null || echo "0")
     local elapsed=$(($(date -u +%s) - started_at))
-    echo "recording pid=$pid file=$file elapsed=${elapsed}s"
+    echo "recording pid=$pid session=$session elapsed=${elapsed}s"
   else
     # If PID file exists but process died, clean up so `start` works next.
     [[ -f "$PID_FILE" ]] && clear_state

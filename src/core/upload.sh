@@ -40,12 +40,26 @@ if [[ ! -s "$FILE" ]]; then
   exit 2
 fi
 
-# If record.sh is still writing this file, refuse.
+# If record.sh is still recording and $FILE is the active (newest) segment of the
+# current session, refuse — ffmpeg is still writing it. FILE_STATE now holds the
+# session prefix (not a single filename), so we resolve the active segment the same
+# way the daemon does: the highest-sorted prefix match (ffmpeg zero-pads %03d, so a
+# lexical sort matches numeric order). Finished lower-indexed segments upload fine.
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  current_file=$(cat "${PID_FILE}.file" 2>/dev/null || true)
-  if [[ "$current_file" == "$FILE" ]]; then
-    echo "upload-cdn.sh: $FILE is currently being recorded — stop first" >&2
-    exit 2
+  current_prefix=$(cat "${PID_FILE}.file" 2>/dev/null || true)
+  if [[ -n "$current_prefix" && "$FILE" == "$current_prefix"* ]]; then
+    # Highest-indexed segment = the one ffmpeg is still writing. Bash expands the
+    # glob in sorted order and ffmpeg zero-pads %03d, so the last existing match is
+    # the newest. A loop (not `ls`) keeps shellcheck happy and survives odd names;
+    # an unmatched glob stays literal and is filtered by the -e test.
+    newest=""
+    for seg in "${current_prefix}"*.mp4; do
+      [[ -e "$seg" ]] && newest="$seg"
+    done
+    if [[ -n "$newest" && "$(realpath "$FILE")" == "$(realpath "$newest")" ]]; then
+      echo "upload-cdn.sh: $FILE is the active segment — stop first" >&2
+      exit 2
+    fi
   fi
 fi
 

@@ -6,7 +6,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _SCHEMA = Path(__file__).parent.parent / "core" / "schema.sql"
 _DATA_DIR = _REPO_ROOT / "data"
 
-# Sentinel the writers (daemon, record_start, TUI retry) touch on every DB commit;
+# Sentinel the writers (daemon, TUI retry) touch on every DB commit;
 # the TUI watches it with watchfiles and reloads its data widgets. This is how a
 # separate writer process nudges the reader — SQLite has no cross-process change
 # notification.
