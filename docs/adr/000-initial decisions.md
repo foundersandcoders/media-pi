@@ -60,6 +60,8 @@ SQLite has no cross-process change notification, and the TUI + daemon are separa
 
 # `VIDEO_CODEC=copy` on the Pi
 
+**Status:** Superseded by DR-001
+
 ## Decision
 The Pi stream-copies the camera's onboard H.264 (`-input_format h264` + `-c:v copy`);
 the Mac dev path keeps `libx264`.
