@@ -24,10 +24,10 @@ START_STATE="${PID_FILE}.started_at"
 RECORDINGS_DIR="${RECORDINGS_DIR:-./recordings}"
 LOG_DIR="${LOG_DIR:-./logs}"
 DISK_SPACE_MIN_MB="${DISK_SPACE_MIN_MB:-500}"
-# Seconds per segment before ffmpeg rotates to the next file. The daemon uploads
-# each finished segment while the next records. On the Pi (VIDEO_CODEC=copy) the
-# real length rounds up to the camera's next keyframe — see docs/dev/PLAN-1.md.
-SEGMENT_DURATION="${SEGMENT_DURATION:-600}"
+
+SEGMENT_FRAMES="${SEGMENT_FRAMES:-24000}"
+VIDEO_FPS="${VIDEO_FPS:-30}"
+MAX_SESSION_HOURS="${MAX_SESSION_HOURS:-12}"
 
 is_running() {
   [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
@@ -70,45 +70,28 @@ cmd_start() {
   pattern="${prefix}%03d.mp4"
   logfile="${LOG_DIR%/}/session_${ts}.log"
 
-  # Video codec is platform config (.env), same pattern as FFMPEG_INPUT_ARGS:
-  #   VIDEO_CODEC=copy (Pi) — mux the camera's onboard H.264 straight through.
-  #     The Pi 5 has no hardware encoder; libx264 can't hold 1080p30 realtime
-  #     (speed ~0.93x), and a live source that falls behind starves the audio
-  #     input — heard as laggy, in-and-out sound.
-  #   VIDEO_CODEC unset (Mac dev) — libx264-encode the raw avfoundation frames.
-  # With -c:v copy ffmpeg can't insert keyframes, so the segment muxer cuts at the
-  # camera's next existing keyframe at/after segment_time. On the libx264 dev path
-  # we force a keyframe every segment so cuts land on time and each segment opens
-  # on an I-frame (independently playable).
-  local video_args
-  if [[ "${VIDEO_CODEC:-libx264}" == "copy" ]]; then
-    video_args=(-c:v copy)
-  else
-    video_args=(-c:v libx264 -preset veryfast -crf 23
-      -force_key_frames "expr:gte(t,n_forced*${SEGMENT_DURATION})")
-  fi
+  # We re-encode with libx264 (DR-001)
+  local video_args split_list max_frames
+  max_frames=$((MAX_SESSION_HOURS * 3600 * VIDEO_FPS))
+  split_list=$(seq -s, "$SEGMENT_FRAMES" "$SEGMENT_FRAMES" "$max_frames")
+  split_list="${split_list%,}" # BSD seq (macOS) appends a trailing separator; GNU does not
+  video_args=(-c:v libx264 -preset veryfast -crf 23 -r "$VIDEO_FPS"
+    -force_key_frames "expr:gte(n,n_forced*${SEGMENT_FRAMES})")
 
-  # ffmpeg: input flags come from .env, audio is fixed (AAC).
+  # ffmpeg: input flags come from .env, audio is fixed (AAC, capped at 128k).
   # We do NOT quote $FFMPEG_INPUT_ARGS — it contains multiple tokens that must
   # be split into separate argv entries.
   # nohup + background + PID capture is the idiomatic way to own a long-running
   # subprocess from a short-lived script.
-  # The segment muxer rotates output every SEGMENT_DURATION seconds. Audio (AAC)
-  # is re-encoded so it cuts cleanly anywhere; only the copied/encoded video gates
-  # the boundary. movflags is carried *per segment* via segment_format_options so
-  # the in-progress last segment is playable without a moov atom — a crash mid-
-  # segment still leaves a usable file. -reset_timestamps makes each segment start
-  # at PTS 0 so it plays standalone.
-  # Known ffmpeg quirk: the FIRST segment is ~2x SEGMENT_DURATION (the muxer skips
-  # the first boundary); every segment after it is exact. Harmless — all segments
-  # are valid and upload independently.
+  #
+  # The segment muxer splits at each frame number
   # shellcheck disable=SC2086
   nohup ffmpeg -hide_banner -nostdin -y \
     $FFMPEG_INPUT_ARGS \
     "${video_args[@]}" \
-    -c:a aac \
+    -c:a aac -b:a 128k \
     -f segment \
-    -segment_time "$SEGMENT_DURATION" \
+    -segment_frames "$split_list" \
     -segment_format mp4 \
     -segment_format_options movflags=+frag_keyframe+empty_moov \
     -reset_timestamps 1 \
