@@ -1,4 +1,3 @@
-# &&&& ENTIRE FILE NEW — scaffold (unit is close to final; verify on the Pi)
 # Fires media-pi-netcheck.service every 5 min (2 min after boot). See the .service
 # file for install steps; enable with: sudo systemctl enable --now media-pi-netcheck.timer
 

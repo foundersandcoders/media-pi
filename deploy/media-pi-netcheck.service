@@ -1,4 +1,3 @@
-# &&&& ENTIRE FILE NEW — scaffold (unit is close to final; verify on the Pi)
 # Media-Pi netcheck — Wi-Fi/Tailscale reachability watchdog (oneshot, timer-driven).
 # Installed by scripts/install-netcheck.sh, or manually:
 #   sudo cp deploy/media-pi-netcheck.service deploy/media-pi-netcheck.timer /etc/systemd/system/

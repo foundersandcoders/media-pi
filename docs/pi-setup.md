@@ -53,7 +53,6 @@ Without this rule the buttons fail fast (no hang) and the TUI shows an error toa
 `sudo -n` never prompts for a password. The rule is intentionally limited to the two
 exact commands.
 
-<!-- !!!! SECTION ADDED — scaffold, remove marker on implementation (Stage 2) -->
 ## 5. Keep Tailscale reachable (Wi-Fi power-save + watchdog)
 
 The Pi's `wlan0` ships with power-save **on**, which parks the radio when idle and
@@ -77,5 +76,10 @@ iw dev wlan0 get power_save              # expect: Power save: off
 systemctl list-timers media-pi-netcheck.timer
 journalctl -u media-pi-netcheck -f       # watch a run: should log "healthy: all checks passed"
 ```
-<!-- !!!! END SECTION ADDED -->
+
+To preview what the watchdog would do without changing anything, run it in dry-run:
+
+```bash
+sudo NETCHECK_DRYRUN=1 NETCHECK_DEMO=unhealthy /opt/media-pi/scripts/netcheck.sh
+```
 
