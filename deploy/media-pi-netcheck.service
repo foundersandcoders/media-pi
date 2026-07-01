@@ -1,0 +1,20 @@
+# &&&& ENTIRE FILE NEW — scaffold (unit is close to final; verify on the Pi)
+# Media-Pi netcheck — Wi-Fi/Tailscale reachability watchdog (oneshot, timer-driven).
+# Installed by scripts/install-netcheck.sh, or manually:
+#   sudo cp deploy/media-pi-netcheck.service deploy/media-pi-netcheck.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now media-pi-netcheck.timer
+# Logs: journalctl -u media-pi-netcheck -f
+
+[Unit]
+Description=Media-Pi Wi-Fi/Tailscale reachability watchdog
+After=network.target tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=oneshot
+# runs as root: sets iw power_save, restarts tailscaled, bounces wlan0 on failure
+WorkingDirectory=/opt/media-pi
+ExecStart=/opt/media-pi/scripts/netcheck.sh
+StandardOutput=journal
+StandardError=journal

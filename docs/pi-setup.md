@@ -52,3 +52,30 @@ admin ALL=(root) NOPASSWD: /usr/bin/systemctl start media-pi-daemon, /usr/bin/sy
 Without this rule the buttons fail fast (no hang) and the TUI shows an error toast —
 `sudo -n` never prompts for a password. The rule is intentionally limited to the two
 exact commands.
+
+<!-- !!!! SECTION ADDED — scaffold, remove marker on implementation (Stage 2) -->
+## 5. Keep Tailscale reachable (Wi-Fi power-save + watchdog)
+
+The Pi's `wlan0` ships with power-save **on**, which parks the radio when idle and
+drops the long-lived tailnet link — so `ssh admin@media-pi` intermittently times out
+on port 22. Two layers fix it (see ADR 002):
+
+1. **Disable Wi-Fi power-save** (the root cause) — a NetworkManager drop-in.
+2. **Watchdog** — a systemd timer runs `scripts/netcheck.sh` every 5 min to re-assert
+   power-save off, confirm `tailscaled` + port 22 are healthy, and self-heal if not.
+
+Install both from `/opt/media-pi`:
+
+```bash
+bash scripts/install-netcheck.sh
+```
+
+Verify it took (and survives a reboot):
+
+```bash
+iw dev wlan0 get power_save              # expect: Power save: off
+systemctl list-timers media-pi-netcheck.timer
+journalctl -u media-pi-netcheck -f       # watch a run: should log "healthy: all checks passed"
+```
+<!-- !!!! END SECTION ADDED -->
+
