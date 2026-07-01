@@ -1,0 +1,14 @@
+# Fires media-pi-netcheck.service every 5 min (2 min after boot). See the .service
+# file for install steps; enable with: sudo systemctl enable --now media-pi-netcheck.timer
+
+[Unit]
+Description=Run Media-Pi netcheck watchdog every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=media-pi-netcheck.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
