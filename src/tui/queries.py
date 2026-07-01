@@ -9,9 +9,9 @@ def get_all_videos():
                 COALESCE(c.name, 'Open Workshop') AS cohort,
                 CASE
                     WHEN c.id IS NOT NULL
-                    THEN 'Week ' || CAST(
-                        (julianday(date(v.recorded_at)) - julianday(c.start_date)) / 7 + 1
-                        AS INTEGER)
+                    -- cohort session: the per-lesson label now lives on event.title,
+                    -- which video rows don't link to yet — show the date for now.
+                    THEN date(v.recorded_at)
                     ELSE w.name
                 END AS name,
                 v.part,
@@ -36,9 +36,9 @@ def get_failed_videos():
                 COALESCE(c.name, 'Open Workshop') AS cohort,
                 CASE
                     WHEN c.id IS NOT NULL
-                    THEN 'Week ' || CAST(
-                        (julianday(date(v.recorded_at)) - julianday(c.start_date)) / 7 + 1
-                        AS INTEGER)
+                    -- cohort session: the per-lesson label now lives on event.title,
+                    -- which video rows don't link to yet — show the date for now.
+                    THEN date(v.recorded_at)
                     ELSE w.name
                 END AS name,
                 v.part,

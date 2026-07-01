@@ -169,7 +169,8 @@ async def upload_worker(conn, ids, queue: asyncio.Queue):
 # --- Event fetching & scheduling ---------------------------------------------
 #
 # ServerEvent — one row of fetch_events.sh JSON (see db.py for the full shape):
-#   {"remote_id", "type" ("workshop"|"cohort"), "name", "start_time", "end_time"}
+#   {"remote_id", "type" ("workshop"|"cohort"), "name", "title", "start_time", "end_time"}
+#   name = group key (-> *_mapping); title = per-occurrence label (-> event.title)
 #
 # STUBS (Plan 1): the coroutines run (so the daemon works end-to-end on fake data)
 # but the real fetch/sync/scheduling logic lands in Plan 2. `# should …` = tests.
@@ -187,14 +188,16 @@ async def _fetch_events() -> list[dict]:
         {
             "remote_id": "fake:workshop:1",
             "type": "workshop",
-            "name": "Fake Workshop",
+            "name": "Fake Workshop",  # workshops: name == title (event IS the occurrence)
+            "title": "Fake Workshop",
             "start_time": "2026-06-30T13:00:00Z",
             "end_time": "2026-06-30T15:00:00Z",
         },
         {
             "remote_id": "fake:cohort:1",
             "type": "cohort",
-            "name": "FAC30",
+            "name": "FAC30",  # cohort group key -> get_or_create_cohort (dedupes)
+            "title": "Week 3 - Fake Lesson",  # this occurrence -> event.title
             "start_time": "2026-06-30T10:00:00Z",
             "end_time": "2026-06-30T17:00:00Z",
         },

@@ -49,9 +49,9 @@ def load_status_ids(conn: sqlite3.Connection) -> dict[str, int]:
 def get_or_create_cohort(conn: sqlite3.Connection, name: str = TEMP_COHORT_NAME) -> int:
     """Return the id of the cohort named `name`, creating it if absent.
 
-    cohort_mapping.name has no UNIQUE constraint, so we SELECT-then-INSERT rather
-    than INSERT OR IGNORE. The date/time fields are NOT NULL; this placeholder
-    cohort fills them with obvious sentinels so it reads as a stand-in at a glance.
+    cohort_mapping is (id, name) — identity only, like workshop_mapping. name has no
+    UNIQUE constraint, so SELECT-then-INSERT. Cohorts repeat across their sessions
+    (each session is its own event keyed on remote_id), so one name -> one row reused.
     """
     row = conn.execute(
         "SELECT id FROM cohort_mapping WHERE name=?",
@@ -59,12 +59,7 @@ def get_or_create_cohort(conn: sqlite3.Connection, name: str = TEMP_COHORT_NAME)
     ).fetchone()
     if row:
         return row["id"]
-    cur = conn.execute(
-        "INSERT INTO cohort_mapping"
-        " (name, start_date, end_date, session_start_time, session_end_time)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (name, "1970-01-01", "1970-01-01", "00:00", "00:00"),  # temp placeholder
-    )
+    cur = conn.execute("INSERT INTO cohort_mapping (name) VALUES (?)", (name,))
     return cur.lastrowid
 
 
@@ -193,14 +188,16 @@ def pending_videos(conn: sqlite3.Connection, ids: dict[str, int]) -> list[sqlite
 # --- Event sync --------------------------------------------------------------
 #
 # ServerEvent — one row of fetch_events.sh JSON output. `type` discriminates the
-# two event kinds; `name` is get-or-created into the matching *_mapping table:
-#   {"remote_id": "attendance:42",          # server's globally-unique id; our upsert key
-#    "type":      "workshop",               # "workshop" | "cohort"
-#    "name":      "JS Arrays",              # -> get_or_create_workshop / _cohort
-#    "start_time": "2026-06-30T13:00:00Z",  # ISO 8601, UTC
+# two kinds; `name` is the GROUP key get-or-created into a *_mapping table (dedupes
+# repeats); `title` is THIS occurrence's display label, stored per-row on event.title:
+#   {"remote_id": "attendance:42",              # server's globally-unique id; our upsert key
+#    "type":      "cohort",                     # "workshop" | "cohort"
+#    "name":      "FACM9",                      # group key -> get_or_create_cohort / _workshop
+#    "title":     "Week 7 - RAG and Evaluation",# occurrence label -> event.title (= name for workshops)
+#    "start_time": "2026-06-30T13:00:00Z",      # ISO 8601, UTC
 #    "end_time":   "2026-06-30T15:00:00Z"}
 #
-# Local event row: id, remote_id, start_time, end_time, and exactly ONE of
+# Local event row: id, remote_id, title, start_time, end_time, and exactly ONE of
 # workshop_mapping_id / cohort_mapping_id (the schema CHECK), chosen by `type`.
 #
 # STUBS (Plan 1): real SQL lands in Plan 2; the `# should …` lines are the tests.
@@ -227,8 +224,8 @@ def upsert_event(conn: sqlite3.Connection, ev: dict) -> None:
     """
     # should route type="workshop" -> workshop_mapping_id set, cohort_mapping_id NULL
     # should route type="cohort"   -> cohort_mapping_id set, workshop_mapping_id NULL
-    # should INSERT with remote_id set for a new remote_id
-    # should UPDATE start_time/end_time when remote_id exists and times changed
+    # should INSERT with remote_id + title set for a new remote_id
+    # should UPDATE start_time/end_time/title when remote_id exists and any changed
     # should no-op when remote_id exists and nothing changed
     # should commit + notify_change() so the TUI refreshes
     return None

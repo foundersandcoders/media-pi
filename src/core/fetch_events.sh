@@ -28,5 +28,6 @@ cd "$REPO_ROOT"
 #   curl -fsS -H "Authorization: Bearer $FAC_SCHEDULE_KEY" \
 #     "${FAC_SCHEDULE_URL}?from=${1}&to=${2}"
 
-# Fake walking-skeleton output (one workshop + one cohort event; `type` discriminates):
-echo '[{"remote_id":"fake:workshop:1","type":"workshop","name":"Fake Workshop","start_time":"2026-06-30T13:00:00Z","end_time":"2026-06-30T15:00:00Z"},{"remote_id":"fake:cohort:1","type":"cohort","name":"FAC30","start_time":"2026-06-30T10:00:00Z","end_time":"2026-06-30T17:00:00Z"}]'
+# Fake walking-skeleton output (one workshop + one cohort event; `type` discriminates,
+# name = group key, title = per-occurrence label):
+echo '[{"remote_id":"fake:workshop:1","type":"workshop","name":"Fake Workshop","title":"Fake Workshop","start_time":"2026-06-30T13:00:00Z","end_time":"2026-06-30T15:00:00Z"},{"remote_id":"fake:cohort:1","type":"cohort","name":"FAC30","title":"Week 3 - Fake Lesson","start_time":"2026-06-30T10:00:00Z","end_time":"2026-06-30T17:00:00Z"}]'
