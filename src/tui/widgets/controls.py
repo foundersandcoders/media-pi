@@ -36,6 +36,19 @@ class ControlsPanel(ArrowNavigable, Widget):
         )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # chunk being edited — scaffold, remove on implementation
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # TODO (Plan 2): guard the "stop" button against accidental stops of a
+        # *scheduled* recording. Before running [RECORD, "stop"]:
+        #   status = recording_status()              # from status.py (parses record.sh status)
+        #   if status.scheduled:
+        #       ok = await self.app.push_screen_wait(ConfirmStop(status.end_time))
+        #       if not ok: return                    # user cancelled -> don't stop
+        # SEAM: on_button_pressed is sync today; the await needs an async handler / @work
+        # worker. Ad-hoc recordings (no end_time) stop freely — no prompt.
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        #
         # daemon controls use `sudo -n`: a missing sudoers rule fails fast instead
         # of prompting for a password on stdin and hanging the TUI.
         cmds = {

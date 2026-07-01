@@ -48,8 +48,16 @@ CREATE TABLE IF NOT EXISTS video (
     )
 );
 
+-- SCHEMA CHANGE: remote_id is the server's globally-unique event id and our
+-- upsert/dedup key. Set for every polled event — cohort AND workshop. UNIQUE
+-- permits multiple NULLs in SQLite, so any manually-added event (no server id)
+-- is unaffected by the dedup.
+-- NOTE: CREATE TABLE IF NOT EXISTS won't add the column to an existing DB — this
+-- branch recreates the test DB; production needs an ALTER TABLE migration. (SEAM)
 CREATE TABLE IF NOT EXISTS event (
     id                  INTEGER PRIMARY KEY,
+    -- !!!! edit (scaffold)
+    remote_id           TEXT UNIQUE,        -- server id e.g. "attendance:42"; NULL only for manually-added events
     cohort_mapping_id   INTEGER REFERENCES cohort_mapping (id),
     workshop_mapping_id INTEGER REFERENCES workshop_mapping (id),
     start_time          TEXT NOT NULL,      -- ISO datetime

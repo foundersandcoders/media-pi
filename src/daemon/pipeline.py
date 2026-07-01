@@ -26,6 +26,8 @@ from .db import (
     recover_stranded_recordings,
     segment_part,
     set_status,
+    # &&&& new (scaffold)
+    sync_events,
 )
 
 log = logging.getLogger("daemon.pipeline")
@@ -38,6 +40,10 @@ STOP = None
 
 # How often the reconcile loop sweeps for stranded recordings.
 RECONCILE_INTERVAL = 5  # seconds
+
+# &&&& new (scaffold)
+# How often the event poller pulls the lesson schedule.
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))  # seconds
 
 
 def active_recording_file() -> str | None:
@@ -155,3 +161,98 @@ async def upload_worker(conn, ids, queue: asyncio.Queue):
         finally:
             queue.task_done()
     log.info("upload worker stopped")
+
+
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+# new chunk — scaffold, remove on implementation
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+# --- Event fetching & scheduling ---------------------------------------------
+#
+# ServerEvent — one row of fetch_events.sh JSON (see db.py for the full shape):
+#   {"remote_id", "type" ("workshop"|"cohort"), "name", "start_time", "end_time"}
+#
+# STUBS (Plan 1): the coroutines run (so the daemon works end-to-end on fake data)
+# but the real fetch/sync/scheduling logic lands in Plan 2. `# should …` = tests.
+
+
+async def _fetch_events() -> list[dict]:
+    """Compute today's 09:00–21:00 London window, call fetch_events.sh, parse JSON.
+
+    SEAM: fetch_events.sh sources .env + curls; the window is computed TZ-aware
+    (Europe/London) then converted to the server's UTC. Mirrors upload_worker's
+    create_subprocess_exec pattern.
+    """
+    # should return [] on non-zero exit or unparseable output
+    return [  # fake walking-skeleton data (Plan 2 replaces with the real fetch)
+        {
+            "remote_id": "fake:workshop:1",
+            "type": "workshop",
+            "name": "Fake Workshop",
+            "start_time": "2026-06-30T13:00:00Z",
+            "end_time": "2026-06-30T15:00:00Z",
+        },
+        {
+            "remote_id": "fake:cohort:1",
+            "type": "cohort",
+            "name": "FAC30",
+            "start_time": "2026-06-30T10:00:00Z",
+            "end_time": "2026-06-30T17:00:00Z",
+        },
+    ]
+
+
+async def poll_events(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
+    """Periodically pull the lesson schedule into the DB; wake the scheduler after.
+
+    Polls immediately on startup (fresh schedule at boot) then every POLL_INTERVAL,
+    cancellable by `stop` via the reconcile_stranded wait_for pattern.
+    """
+    log.info("event poller started (every %ss)", POLL_INTERVAL)
+    while not stop.is_set():
+        # should each tick: _fetch_events() -> sync_events() -> replan.set()
+        # should swallow+log a failed poll (next tick retries) — never crash the loop
+        try:
+            events = await _fetch_events()
+            synced = sync_events(conn, events)
+            log.info("polled %d event(s) -> synced %d", len(events), synced)
+            replan.set()
+        except Exception:  # noqa: BLE001 — a poll failure must not kill the loop
+            log.exception("event poll failed; retrying next tick")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass  # interval elapsed — poll again
+    log.info("event poller stopped")
+
+
+async def scheduler(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
+    """Plan recordings from the event table: start at start_time, stop at end_time.
+
+    STEP-4 shared filming mechanism (same for workshop & future cohort events).
+    Plan 1 just proves the wake wiring; the planning logic lands in Plan 2.
+    """
+    log.info("scheduler started")
+    while not stop.is_set():
+        # should, on entry & each wake: active_event(now) and not recording -> start (resume)
+        # should otherwise sleep until next_event(now).start_time OR until replan fires
+        # should, on start: snapshot end_time -> record.sh start --scheduled --end-time <iso>
+        # should stop at the snapshot; ignore later poll changes to an in-progress recording
+        # should skip (and log) a new event overlapping one already recording
+        # should guard via record.sh status before start/stop (no double start/stop)
+        replan.clear()
+        waiters = {
+            asyncio.create_task(stop.wait()),
+            asyncio.create_task(replan.wait()),
+        }
+        _done, pending = await asyncio.wait(
+            waiters, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        if stop.is_set():
+            break
+        log.info("scheduler re-planning (woken by poll)")
+    log.info("scheduler stopped")
+
+
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&

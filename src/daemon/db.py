@@ -185,3 +185,99 @@ def pending_videos(conn: sqlite3.Connection, ids: dict[str, int]) -> list[sqlite
         " WHERE status_mapping_id=? ORDER BY recorded_at ASC",
         (ids["in_queue"],),
     ).fetchall()
+
+
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+# new chunk — scaffold, remove on implementation
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+# --- Event sync --------------------------------------------------------------
+#
+# ServerEvent — one row of fetch_events.sh JSON output. `type` discriminates the
+# two event kinds; `name` is get-or-created into the matching *_mapping table:
+#   {"remote_id": "attendance:42",          # server's globally-unique id; our upsert key
+#    "type":      "workshop",               # "workshop" | "cohort"
+#    "name":      "JS Arrays",              # -> get_or_create_workshop / _cohort
+#    "start_time": "2026-06-30T13:00:00Z",  # ISO 8601, UTC
+#    "end_time":   "2026-06-30T15:00:00Z"}
+#
+# Local event row: id, remote_id, start_time, end_time, and exactly ONE of
+# workshop_mapping_id / cohort_mapping_id (the schema CHECK), chosen by `type`.
+#
+# STUBS (Plan 1): real SQL lands in Plan 2; the `# should …` lines are the tests.
+
+
+def get_or_create_workshop(conn: sqlite3.Connection, name: str) -> int:
+    """workshop_mapping.id for `name`, creating the row if absent.
+
+    Mirrors get_or_create_cohort: workshop_mapping.name has no UNIQUE constraint,
+    so SELECT-then-INSERT. Workshops repeat, so a new name is added once and reused.
+    """
+    # should return the existing id when the name already exists (no duplicate)
+    # should INSERT and return a new id when the name is new
+    return 1  # fake
+
+
+def upsert_event(conn: sqlite3.Connection, ev: dict) -> None:
+    """INSERT a new event, or UPDATE its times if remote_id already exists.
+
+    SEAM: ev["type"] picks the mapping — "workshop" -> get_or_create_workshop,
+    "cohort" -> get_or_create_cohort(name) — and the OTHER *_mapping_id stays NULL
+    so the schema's exactly-one CHECK holds. (Server cohorts arrive as a name only;
+    get_or_create_cohort fills the date/time columns with placeholders for now.)
+    """
+    # should route type="workshop" -> workshop_mapping_id set, cohort_mapping_id NULL
+    # should route type="cohort"   -> cohort_mapping_id set, workshop_mapping_id NULL
+    # should INSERT with remote_id set for a new remote_id
+    # should UPDATE start_time/end_time when remote_id exists and times changed
+    # should no-op when remote_id exists and nothing changed
+    # should commit + notify_change() so the TUI refreshes
+    return None
+
+
+def delete_absent_future_events(
+    conn: sqlite3.Connection,
+    present_ids: set[str],
+    now_iso: str,
+    window_end_iso: str,
+) -> int:
+    """Hard-delete future, in-window events missing from the latest poll (cancelled).
+
+    Returns the number deleted.
+    """
+    # should delete only rows where start_time > now AND start_time <= window_end
+    #        AND remote_id IS NOT NULL AND remote_id NOT IN present_ids
+    # should never delete started/past rows, nor NULL-remote_id (manual) rows
+    # should commit + notify_change() only when something was deleted
+    return 0  # fake
+
+
+def sync_events(conn: sqlite3.Connection, events: list[dict]) -> int:
+    """Reconcile the DB to the latest poll: upsert all, then delete the cancelled.
+
+    Returns the number of events synced.
+    """
+    # should upsert_event() every row, then delete_absent_future_events(...)
+    for ev in events:
+        upsert_event(conn, ev)
+    # TODO (Plan 2): delete_absent_future_events(present_ids, now, window_end)
+    return len(events)
+
+
+def events_in_window(
+    conn: sqlite3.Connection, start_iso: str, end_iso: str
+) -> list[sqlite3.Row]:
+    """Events overlapping [start, end], ordered by start_time — for the scheduler/TUI."""
+    return []  # fake
+
+
+def active_event(conn: sqlite3.Connection, when_iso: str) -> sqlite3.Row | None:
+    """The event with start <= when < end (reboot-resume; 'is this recording scheduled?')."""
+    return None  # fake
+
+
+def next_event(conn: sqlite3.Connection, after_iso: str) -> sqlite3.Row | None:
+    """Soonest event with start_time > after — what the scheduler sleeps until."""
+    return None  # fake
+
+
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
