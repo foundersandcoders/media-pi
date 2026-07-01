@@ -49,9 +49,9 @@ def load_status_ids(conn: sqlite3.Connection) -> dict[str, int]:
 def get_or_create_cohort(conn: sqlite3.Connection, name: str = TEMP_COHORT_NAME) -> int:
     """Return the id of the cohort named `name`, creating it if absent.
 
-    cohort_mapping.name has no UNIQUE constraint, so we SELECT-then-INSERT rather
-    than INSERT OR IGNORE. The date/time fields are NOT NULL; this placeholder
-    cohort fills them with obvious sentinels so it reads as a stand-in at a glance.
+    cohort_mapping is (id, name) — identity only, like workshop_mapping. name has no
+    UNIQUE constraint, so SELECT-then-INSERT. Cohorts repeat across their sessions
+    (each session is its own event keyed on remote_id), so one name -> one row reused.
     """
     row = conn.execute(
         "SELECT id FROM cohort_mapping WHERE name=?",
@@ -59,12 +59,7 @@ def get_or_create_cohort(conn: sqlite3.Connection, name: str = TEMP_COHORT_NAME)
     ).fetchone()
     if row:
         return row["id"]
-    cur = conn.execute(
-        "INSERT INTO cohort_mapping"
-        " (name, start_date, end_date, session_start_time, session_end_time)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (name, "1970-01-01", "1970-01-01", "00:00", "00:00"),  # temp placeholder
-    )
+    cur = conn.execute("INSERT INTO cohort_mapping (name) VALUES (?)", (name,))
     return cur.lastrowid
 
 
@@ -185,3 +180,162 @@ def pending_videos(conn: sqlite3.Connection, ids: dict[str, int]) -> list[sqlite
         " WHERE status_mapping_id=? ORDER BY recorded_at ASC",
         (ids["in_queue"],),
     ).fetchall()
+
+
+# --- Event sync --------------------------------------------------------------
+#
+# ServerEvent — one row of fetch_events.sh JSON output. `type` discriminates the
+# two kinds; `name` is the GROUP key get-or-created into a *_mapping table (dedupes
+# repeats); `title` is THIS occurrence's display label, stored per-row on event.title:
+#   {"remote_id": "attendance:42",              # server's globally-unique id; our upsert key
+#    "type":      "cohort",                     # "workshop" | "cohort"
+#    "name":      "FACM9",                      # group key -> get_or_create_cohort / _workshop
+#    "title":     "Week 7 - RAG and Evaluation",# occurrence label -> event.title (= name for workshops)
+#    "start_time": "2026-06-30T13:00:00Z",      # ISO 8601, UTC
+#    "end_time":   "2026-06-30T15:00:00Z"}
+#
+# Local event row: id, remote_id, title, start_time, end_time, and exactly ONE of
+# workshop_mapping_id / cohort_mapping_id (the schema CHECK), chosen by `type`.
+
+
+def get_or_create_workshop(conn: sqlite3.Connection, name: str) -> int:
+    """workshop_mapping.id for `name`, creating the row if absent.
+
+    Mirrors get_or_create_cohort: workshop_mapping.name has no UNIQUE constraint,
+    so SELECT-then-INSERT. Workshops repeat, so a new name is added once and reused.
+    """
+    row = conn.execute(
+        "SELECT id FROM workshop_mapping WHERE name=?",
+        (name,),
+    ).fetchone()
+    if row:
+        return row["id"]
+    cur = conn.execute("INSERT INTO workshop_mapping (name) VALUES (?)", (name,))
+    return cur.lastrowid
+
+
+def upsert_event(conn: sqlite3.Connection, ev: dict) -> None:
+    """INSERT a new event, or UPDATE its label/times if remote_id already exists.
+
+    ev["type"] picks the mapping — "workshop" -> get_or_create_workshop, "cohort" ->
+    get_or_create_cohort — and the OTHER *_mapping_id stays NULL so the schema's
+    exactly-one CHECK holds. `name` is the group key (mapping); `title` is this
+    occurrence's label, stored per-row. Upsert key is remote_id.
+    """
+    if ev["type"] == "cohort":
+        cohort_id: int | None = get_or_create_cohort(conn, ev["name"])
+        workshop_id: int | None = None
+    else:
+        cohort_id = None
+        workshop_id = get_or_create_workshop(conn, ev["name"])
+
+    existing = conn.execute(
+        "SELECT title, start_time, end_time FROM event WHERE remote_id=?",
+        (ev["remote_id"],),
+    ).fetchone()
+
+    if existing is None:
+        conn.execute(
+            "INSERT INTO event"
+            " (remote_id, title, cohort_mapping_id, workshop_mapping_id,"
+            "  start_time, end_time)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ev["remote_id"],
+                ev["title"],
+                cohort_id,
+                workshop_id,
+                ev["start_time"],
+                ev["end_time"],
+            ),
+        )
+    elif (existing["title"], existing["start_time"], existing["end_time"]) != (
+        ev["title"],
+        ev["start_time"],
+        ev["end_time"],
+    ):
+        conn.execute(
+            "UPDATE event SET title=?, start_time=?, end_time=? WHERE remote_id=?",
+            (ev["title"], ev["start_time"], ev["end_time"], ev["remote_id"]),
+        )
+    else:
+        return  # no-op: remote_id exists and nothing changed — skip commit/notify
+
+    conn.commit()
+    notify_change()
+
+
+def delete_absent_future_events(
+    conn: sqlite3.Connection,
+    present_ids: set[str],
+    now_iso: str,
+    window_end_iso: str,
+) -> int:
+    """Hard-delete future, in-window events missing from the latest poll (cancelled).
+
+    Returns the number deleted. Only touches server-sourced rows (remote_id set)
+    that have not yet started, so past recordings and manual rows are never lost.
+    """
+    candidates = conn.execute(
+        "SELECT id, remote_id FROM event"
+        " WHERE remote_id IS NOT NULL AND start_time > ? AND start_time <= ?",
+        (now_iso, window_end_iso),
+    ).fetchall()
+    stale = [row["id"] for row in candidates if row["remote_id"] not in present_ids]
+    if not stale:
+        return 0
+    conn.executemany(
+        "DELETE FROM event WHERE id=?", [(event_id,) for event_id in stale]
+    )
+    conn.commit()
+    notify_change()
+    return len(stale)
+
+
+def sync_events(
+    conn: sqlite3.Connection,
+    events: list[dict],
+    now_iso: str,
+    window_end_iso: str,
+) -> int:
+    """Reconcile the DB to the latest poll: upsert all, then delete the cancelled.
+
+    `now_iso`/`window_end_iso` are the same window the events were fetched for, so
+    a row that dropped out of the poll is treated as cancelled. Returns the number
+    of events upserted.
+    """
+    for ev in events:
+        upsert_event(conn, ev)
+    present_ids = {ev["remote_id"] for ev in events}
+    delete_absent_future_events(conn, present_ids, now_iso, window_end_iso)
+    return len(events)
+
+
+def events_in_window(
+    conn: sqlite3.Connection, start_iso: str, end_iso: str
+) -> list[sqlite3.Row]:
+    """Events overlapping [start, end], ordered by start_time — for the scheduler/TUI."""
+    return conn.execute(
+        "SELECT * FROM event"
+        " WHERE start_time <= ? AND end_time >= ?"
+        " ORDER BY start_time ASC",
+        (end_iso, start_iso),
+    ).fetchall()
+
+
+def active_event(conn: sqlite3.Connection, when_iso: str) -> sqlite3.Row | None:
+    """The event with start <= when < end (reboot-resume; 'is this recording scheduled?')."""
+    return conn.execute(
+        "SELECT * FROM event"
+        " WHERE start_time <= ? AND end_time > ?"
+        " ORDER BY start_time ASC LIMIT 1",
+        (when_iso, when_iso),
+    ).fetchone()
+
+
+def next_event(conn: sqlite3.Connection, after_iso: str) -> sqlite3.Row | None:
+    """Soonest event with start_time > after — what the scheduler sleeps until."""
+    return conn.execute(
+        "SELECT * FROM event WHERE start_time > ? ORDER BY start_time ASC LIMIT 1",
+        (after_iso,),
+    ).fetchone()

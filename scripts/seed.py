@@ -19,20 +19,8 @@ if "test" not in db_path.name:
 # ---------------------------------------------------------------------------
 
 COHORTS = [
-    {
-        "name": "FAC30",
-        "start_date": (date.today() - timedelta(weeks=12)).isoformat(),
-        "end_date": (date.today() + timedelta(weeks=12)).isoformat(),
-        "session_start_time": "10:00",
-        "session_end_time": "17:00",
-    },
-    {
-        "name": "FAC29",
-        "start_date": (date.today() - timedelta(weeks=36)).isoformat(),
-        "end_date": (date.today() - timedelta(weeks=12)).isoformat(),
-        "session_start_time": "10:00",
-        "session_end_time": "17:00",
-    },
+    {"name": "FAC30"},
+    {"name": "FAC29"},
 ]
 
 WORKSHOPS = [
@@ -64,14 +52,10 @@ def _status_id(conn, name):
 
 
 def seed(conn):
-    # cohort_mapping
+    # cohort_mapping — identity only (id, name); the poller get-or-creates the same way
     cohort_ids = []
     for c in COHORTS:
-        cur = conn.execute(
-            "INSERT INTO cohort_mapping (name, start_date, end_date, session_start_time, session_end_time)"
-            " VALUES (:name, :start_date, :end_date, :session_start_time, :session_end_time)",
-            c,
-        )
+        cur = conn.execute("INSERT INTO cohort_mapping (name) VALUES (:name)", c)
         cohort_ids.append(cur.lastrowid)
 
     # workshop_mapping
@@ -80,37 +64,9 @@ def seed(conn):
         cur = conn.execute("INSERT INTO workshop_mapping (name) VALUES (:name)", w)
         workshop_ids.append(cur.lastrowid)
 
-    # events — prefill weekly sessions for active cohort (FAC30)
+    # events — no longer seeded here. The daemon's poller (fetch_events.sh ->
+    # sync_events) populates the event table live; see pipeline._fetch_events.
     active_cohort_id = cohort_ids[0]
-    active = COHORTS[0]
-    session_start = time.fromisoformat(active["session_start_time"])
-    session_end = time.fromisoformat(active["session_end_time"])
-    d = date.fromisoformat(active["start_date"])
-    end = date.fromisoformat(active["end_date"])
-    while d <= end:
-        conn.execute(
-            "INSERT INTO event (cohort_mapping_id, start_time, end_time) VALUES (?, ?, ?)",
-            (active_cohort_id, _dt(d, session_start), _dt(d, session_end)),
-        )
-        d += timedelta(weeks=1)
-
-    # events — two open workshop events
-    conn.execute(
-        "INSERT INTO event (workshop_mapping_id, start_time, end_time) VALUES (?, ?, ?)",
-        (
-            workshop_ids[0],
-            _dt(date.today() + timedelta(days=3), time(10, 0)),
-            _dt(date.today() + timedelta(days=3), time(13, 0)),
-        ),
-    )
-    conn.execute(
-        "INSERT INTO event (workshop_mapping_id, start_time, end_time) VALUES (?, ?, ?)",
-        (
-            workshop_ids[1],
-            _dt(date.today() + timedelta(days=10), time(14, 0)),
-            _dt(date.today() + timedelta(days=10), time(17, 0)),
-        ),
-    )
 
     # videos — mix of statuses, cohort and workshop
     videos = [

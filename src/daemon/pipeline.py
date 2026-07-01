@@ -14,10 +14,13 @@ the outcome back to the DB. A `None` sentinel on the queue stops it cleanly
 
 import asyncio
 import glob
+import json
 import logging
 import os
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
-from tui.paths import UPLOAD
+from tui.paths import FETCH, UPLOAD
 
 from .db import (
     RECORDINGS_DIR,
@@ -26,6 +29,7 @@ from .db import (
     recover_stranded_recordings,
     segment_part,
     set_status,
+    sync_events,
 )
 
 log = logging.getLogger("daemon.pipeline")
@@ -38,6 +42,15 @@ STOP = None
 
 # How often the reconcile loop sweeps for stranded recordings.
 RECONCILE_INTERVAL = 5  # seconds
+
+# How often the event poller pulls the lesson schedule.
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))  # seconds
+
+# The daily filming window. The server is asked only for events inside it, and the
+# same bound scopes cancellation cleanup — a London wall-clock band (BST-aware).
+_LONDON = ZoneInfo("Europe/London")
+WINDOW_START = time(9, 0)
+WINDOW_END = time(21, 0)
 
 
 def active_recording_file() -> str | None:
@@ -155,3 +168,127 @@ async def upload_worker(conn, ids, queue: asyncio.Queue):
         finally:
             queue.task_done()
     log.info("upload worker stopped")
+
+
+# --- Event fetching & scheduling ---------------------------------------------
+#
+# ServerEvent — one row of fetch_events.sh JSON (see db.py for the full shape):
+#   {"remote_id", "type" ("workshop"|"cohort"), "name", "title", "start_time", "end_time"}
+#   name = group key (-> *_mapping); title = per-occurrence label (-> event.title)
+
+
+def _to_utc_z(dt: datetime) -> str:
+    """A timezone-aware datetime as UTC ISO 8601 with a Z suffix (server format)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utc_now() -> str:
+    """Current instant as UTC ISO 8601 with a Z suffix — matches server timestamps."""
+    return _to_utc_z(datetime.now(timezone.utc))
+
+
+def _event_window(now: datetime) -> tuple[str, str]:
+    """Today's WINDOW_START–WINDOW_END Europe/London band as UTC ISO 8601 (Z) strings.
+
+    `now` is timezone-aware; the date is taken in London so the window tracks the
+    local day (and BST/GMT), then both bounds convert to UTC for the server.
+    """
+    local_date = now.astimezone(_LONDON).date()
+    start = datetime.combine(local_date, WINDOW_START, _LONDON)
+    end = datetime.combine(local_date, WINDOW_END, _LONDON)
+    return _to_utc_z(start), _to_utc_z(end)
+
+
+async def _fetch_events(from_iso: str, to_iso: str) -> list[dict] | None:
+    """Run fetch_events.sh for [from, to] and parse its JSON array of ServerEvents.
+
+    Returns None when the poll FAILS (non-zero exit or unparseable output) so the
+    caller skips reconciliation — a failed fetch must not be mistaken for an empty
+    schedule, which would delete every upcoming event. A genuine empty schedule is
+    a valid []. Mirrors upload_worker's create_subprocess_exec pattern.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        FETCH,
+        from_iso,
+        to_iso,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        log.warning(
+            "fetch_events.sh exited %s: %s",
+            proc.returncode,
+            stderr.decode(errors="replace").strip(),
+        )
+        return None
+    try:
+        events = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("fetch_events.sh output was not valid JSON")
+        return None
+    if not isinstance(events, list):
+        log.warning("fetch_events.sh output was not a JSON array")
+        return None
+    return events
+
+
+async def poll_events(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
+    """Periodically pull the lesson schedule into the DB; wake the scheduler after.
+
+    Polls immediately on startup (fresh schedule at boot) then every POLL_INTERVAL,
+    cancellable by `stop` via the reconcile_stranded wait_for pattern.
+    """
+    log.info("event poller started (every %ss)", POLL_INTERVAL)
+    while not stop.is_set():
+        try:
+            from_iso, to_iso = _event_window(datetime.now(timezone.utc))
+            events = await _fetch_events(from_iso, to_iso)
+            if events is None:
+                # Fetch failed — leave the existing schedule intact (do NOT reconcile,
+                # which would delete every upcoming event). Next tick retries.
+                log.warning("event poll failed; keeping existing schedule")
+            else:
+                synced = sync_events(conn, events, _utc_now(), to_iso)
+                log.info("polled %d event(s) -> synced %d", len(events), synced)
+                replan.set()
+        except Exception:  # noqa: BLE001 — a poll failure must not kill the loop
+            log.exception("event poll failed; retrying next tick")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass  # interval elapsed — poll again
+    log.info("event poller stopped")
+
+
+async def scheduler(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
+    """Plan recordings from the event table: start at start_time, stop at end_time.
+
+    STEP-4 shared filming mechanism (same for workshop & future cohort events).
+    Plan 1 just proves the wake wiring; the planning logic lands in Plan 2.
+    """
+    log.info("scheduler started")
+    while not stop.is_set():
+        # should, on entry & each wake: active_event(now) and not recording -> start (resume)
+        # should otherwise sleep until next_event(now).start_time OR until replan fires
+        # should, on start: snapshot end_time -> record.sh start --scheduled --end-time <iso>
+        # should stop at the snapshot; ignore later poll changes to an in-progress recording
+        # should skip (and log) a new event overlapping one already recording
+        # should guard via record.sh status before start/stop (no double start/stop)
+        replan.clear()
+        waiters = {
+            asyncio.create_task(stop.wait()),
+            asyncio.create_task(replan.wait()),
+        }
+        _done, pending = await asyncio.wait(
+            waiters, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        if stop.is_set():
+            break
+        log.info("scheduler re-planning (woken by poll)")
+    log.info("scheduler stopped")
+
+
+# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&

@@ -21,6 +21,15 @@ set +a
 PID_FILE="${PID_FILE:-/tmp/fac-recorder.pid}"
 FILE_STATE="${PID_FILE}.file"
 START_STATE="${PID_FILE}.started_at"
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# chunk being edited — scaffold, remove on implementation
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# TODO (Plan 2): scheduled-recording state, written by cmd_start when the
+# daemon's scheduler launches a recording, read by cmd_status so the TUI can guard
+# manual stops. New files alongside the three above:
+#   SCHEDULED_STATE="${PID_FILE}.scheduled"   # presence = scheduled, not ad-hoc
+#   END_TIME_STATE="${PID_FILE}.end_time"     # snapshot iso end_time for the prompt
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 RECORDINGS_DIR="${RECORDINGS_DIR:-./recordings}"
 LOG_DIR="${LOG_DIR:-./logs}"
 DISK_SPACE_MIN_MB="${DISK_SPACE_MIN_MB:-500}"
@@ -35,10 +44,13 @@ is_running() {
 
 clear_state() {
   # removes all file states
+  # !!!! TODO (Plan 2): also rm -f "$SCHEDULED_STATE" "$END_TIME_STATE"
   rm -f "$PID_FILE" "$FILE_STATE" "$START_STATE"
 }
 
 cmd_start() {
+  # !!!! TODO (Plan 2): parse optional `--scheduled --end-time <iso>` and write
+  # SCHEDULED_STATE + END_TIME_STATE, so a daemon-scheduled recording is tagged.
   if is_running; then
     echo "record.sh: already recording (pid $(cat "$PID_FILE"), file $(cat "$FILE_STATE" 2>/dev/null))" >&2
     exit 1
@@ -165,6 +177,8 @@ cmd_status() {
     session=$(cat "$FILE_STATE" 2>/dev/null || echo "<unknown>")
     started_at=$(cat "$START_STATE" 2>/dev/null || echo "0")
     local elapsed=$(($(date -u +%s) - started_at))
+    # !!!! TODO (Plan 2): append `scheduled=<0|1> end_time=<iso>` so the TUI can
+    # tell scheduled from ad-hoc and show the end time in the confirm prompt.
     echo "recording pid=$pid session=$session elapsed=${elapsed}s"
   else
     # If PID file exists but process died, clean up so `start` works next.

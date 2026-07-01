@@ -20,7 +20,11 @@ from .db import (
 from .pipeline import (
     STOP,
     active_recording_file,
+    # &&&& new (scaffold)
+    poll_events,
     reconcile_stranded,
+    # &&&& new (scaffold)
+    scheduler,
     upload_worker,
     watch_recordings,
 )
@@ -64,6 +68,9 @@ async def main() -> None:
         log.info("enqueued %d pending upload(s)", queue.qsize())
 
         stop = asyncio.Event()
+        # !!!! edit (scaffold)
+        # replan: poll_events sets it after each sync; scheduler awaits it to re-plan.
+        replan = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
@@ -75,11 +82,17 @@ async def main() -> None:
         reconcile_task = asyncio.create_task(
             reconcile_stranded(conn, status_ids, queue, stop)
         )
+        # !!!! edit (scaffold)
+        poll_task = asyncio.create_task(poll_events(conn, status_ids, replan, stop))
+        sched_task = asyncio.create_task(scheduler(conn, status_ids, replan, stop))
 
         await stop.wait()
         log.info("shutdown signal received — draining")
         await watch_task  # awatch exits on the stop event
         await reconcile_task  # exits on the stop event
+        # !!!! edit (scaffold)
+        await poll_task  # exits on the stop event
+        await sched_task  # exits on the stop event
         await queue.put(STOP)  # wake the worker once the in-flight upload finishes
         await worker_task
         log.info("daemon stopped cleanly")
