@@ -14,10 +14,13 @@ the outcome back to the DB. A `None` sentinel on the queue stops it cleanly
 
 import asyncio
 import glob
+import json
 import logging
 import os
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
-from tui.paths import UPLOAD
+from tui.paths import FETCH, UPLOAD
 
 from .db import (
     RECORDINGS_DIR,
@@ -26,7 +29,6 @@ from .db import (
     recover_stranded_recordings,
     segment_part,
     set_status,
-    # &&&& new (scaffold)
     sync_events,
 )
 
@@ -41,9 +43,14 @@ STOP = None
 # How often the reconcile loop sweeps for stranded recordings.
 RECONCILE_INTERVAL = 5  # seconds
 
-# &&&& new (scaffold)
 # How often the event poller pulls the lesson schedule.
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))  # seconds
+
+# The daily filming window. The server is asked only for events inside it, and the
+# same bound scopes cancellation cleanup — a London wall-clock band (BST-aware).
+_LONDON = ZoneInfo("Europe/London")
+WINDOW_START = time(9, 0)
+WINDOW_END = time(21, 0)
 
 
 def active_recording_file() -> str | None:
@@ -163,45 +170,67 @@ async def upload_worker(conn, ids, queue: asyncio.Queue):
     log.info("upload worker stopped")
 
 
-# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-# new chunk — scaffold, remove on implementation
-# &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
 # --- Event fetching & scheduling ---------------------------------------------
 #
 # ServerEvent — one row of fetch_events.sh JSON (see db.py for the full shape):
 #   {"remote_id", "type" ("workshop"|"cohort"), "name", "title", "start_time", "end_time"}
 #   name = group key (-> *_mapping); title = per-occurrence label (-> event.title)
-#
-# STUBS (Plan 1): the coroutines run (so the daemon works end-to-end on fake data)
-# but the real fetch/sync/scheduling logic lands in Plan 2. `# should …` = tests.
 
 
-async def _fetch_events() -> list[dict]:
-    """Compute today's 09:00–21:00 London window, call fetch_events.sh, parse JSON.
+def _to_utc_z(dt: datetime) -> str:
+    """A timezone-aware datetime as UTC ISO 8601 with a Z suffix (server format)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    SEAM: fetch_events.sh sources .env + curls; the window is computed TZ-aware
-    (Europe/London) then converted to the server's UTC. Mirrors upload_worker's
-    create_subprocess_exec pattern.
+
+def _utc_now() -> str:
+    """Current instant as UTC ISO 8601 with a Z suffix — matches server timestamps."""
+    return _to_utc_z(datetime.now(timezone.utc))
+
+
+def _event_window(now: datetime) -> tuple[str, str]:
+    """Today's WINDOW_START–WINDOW_END Europe/London band as UTC ISO 8601 (Z) strings.
+
+    `now` is timezone-aware; the date is taken in London so the window tracks the
+    local day (and BST/GMT), then both bounds convert to UTC for the server.
     """
-    # should return [] on non-zero exit or unparseable output
-    return [  # fake walking-skeleton data (Plan 2 replaces with the real fetch)
-        {
-            "remote_id": "fake:workshop:1",
-            "type": "workshop",
-            "name": "Fake Workshop",  # workshops: name == title (event IS the occurrence)
-            "title": "Fake Workshop",
-            "start_time": "2026-06-30T13:00:00Z",
-            "end_time": "2026-06-30T15:00:00Z",
-        },
-        {
-            "remote_id": "fake:cohort:1",
-            "type": "cohort",
-            "name": "FAC30",  # cohort group key -> get_or_create_cohort (dedupes)
-            "title": "Week 3 - Fake Lesson",  # this occurrence -> event.title
-            "start_time": "2026-06-30T10:00:00Z",
-            "end_time": "2026-06-30T17:00:00Z",
-        },
-    ]
+    local_date = now.astimezone(_LONDON).date()
+    start = datetime.combine(local_date, WINDOW_START, _LONDON)
+    end = datetime.combine(local_date, WINDOW_END, _LONDON)
+    return _to_utc_z(start), _to_utc_z(end)
+
+
+async def _fetch_events(from_iso: str, to_iso: str) -> list[dict] | None:
+    """Run fetch_events.sh for [from, to] and parse its JSON array of ServerEvents.
+
+    Returns None when the poll FAILS (non-zero exit or unparseable output) so the
+    caller skips reconciliation — a failed fetch must not be mistaken for an empty
+    schedule, which would delete every upcoming event. A genuine empty schedule is
+    a valid []. Mirrors upload_worker's create_subprocess_exec pattern.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        FETCH,
+        from_iso,
+        to_iso,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        log.warning(
+            "fetch_events.sh exited %s: %s",
+            proc.returncode,
+            stderr.decode(errors="replace").strip(),
+        )
+        return None
+    try:
+        events = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("fetch_events.sh output was not valid JSON")
+        return None
+    if not isinstance(events, list):
+        log.warning("fetch_events.sh output was not a JSON array")
+        return None
+    return events
 
 
 async def poll_events(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
@@ -212,13 +241,17 @@ async def poll_events(conn, ids, replan: asyncio.Event, stop: asyncio.Event):
     """
     log.info("event poller started (every %ss)", POLL_INTERVAL)
     while not stop.is_set():
-        # should each tick: _fetch_events() -> sync_events() -> replan.set()
-        # should swallow+log a failed poll (next tick retries) — never crash the loop
         try:
-            events = await _fetch_events()
-            synced = sync_events(conn, events)
-            log.info("polled %d event(s) -> synced %d", len(events), synced)
-            replan.set()
+            from_iso, to_iso = _event_window(datetime.now(timezone.utc))
+            events = await _fetch_events(from_iso, to_iso)
+            if events is None:
+                # Fetch failed — leave the existing schedule intact (do NOT reconcile,
+                # which would delete every upcoming event). Next tick retries.
+                log.warning("event poll failed; keeping existing schedule")
+            else:
+                synced = sync_events(conn, events, _utc_now(), to_iso)
+                log.info("polled %d event(s) -> synced %d", len(events), synced)
+                replan.set()
         except Exception:  # noqa: BLE001 — a poll failure must not kill the loop
             log.exception("event poll failed; retrying next tick")
         try:
